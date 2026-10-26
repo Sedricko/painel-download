@@ -29,7 +29,8 @@ GRUPOS = {
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
 }
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
-NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))  # guarda o cookie da sessao, como o navegador
+JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
+NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
 
 
@@ -147,9 +148,24 @@ def gerar_indice(raiz, inicio, origem):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False):
+             sitemap=True, formularios=False, cookies=None):
     os.makedirs(raiz, exist_ok=True)
+    cookies = cookies or {}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
+
+    def cab(u, extra=None):
+        """cabecalhos; junta o cookie da sessao (JAR) com o cookie do login do dominio (areas que pedem login)"""
+        h = {'User-Agent': 'leitura-pessoal'}
+        req = urllib.request.Request(u)
+        JAR.add_cookie_header(req)  # cookies que o site mandou durante o download
+        d = urllib.parse.urlparse(u).netloc
+        login = next((ck for dom, ck in cookies.items() if d == dom or d.endswith('.' + dom)), '')
+        junto = '; '.join(x for x in (req.get_header('Cookie'), login) if x)
+        if junto:
+            h['Cookie'] = junto
+        if extra:
+            h.update(extra)
+        return h
     filtros = '\n'.join(('+*' + f.strip() if f.strip().startswith('.') else f) for f in filtros.splitlines())  # '.lua' means +*.lua
     mais = [f[1:].strip() for f in filtros.splitlines() if f.startswith('+')]
     menos = [f[1:].strip() for f in filtros.splitlines() if f.startswith('-')]
@@ -196,7 +212,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if espera > 0:
                 time.sleep(espera)
             try:
-                r = NAVEGADOR.open(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30)
+                r = NAVEGADOR.open(urllib.request.Request(u, headers=cab(u)), timeout=30)
                 if int(r.headers.get('Content-Length') or 0) > max_mb << 20:
                     log(f'pulei {u}: maior que {max_mb} MB')
                     return None, False
@@ -220,7 +236,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     def enviar_formularios(u):
         """so no site do proprio usuario: abre a pagina de novo (token novo) e aperta os botoes de download"""
         try:
-            texto = NAVEGADOR.open(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30).read().decode('utf-8', 'replace')
+            texto = NAVEGADOR.open(urllib.request.Request(u, headers=cab(u)), timeout=30).read().decode('utf-8', 'replace')
         except Exception as e:
             log(f'falhou {u}: {e}')
             return
@@ -230,7 +246,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             time.sleep(pausa)
             try:
                 r = NAVEGADOR.open(urllib.request.Request(acao, data=urllib.parse.urlencode(dados).encode(),
-                                                          headers={'User-Agent': 'leitura-pessoal', 'Referer': u}), timeout=30)
+                                                          headers=cab(acao, {'Referer': u})), timeout=30)
                 nome = re.search(r'''filename\*?=(?:UTF-8'')?["']?([^"';]+)''', r.headers.get('Content-Disposition') or '', re.I)
                 if not nome:
                     continue  # nao era download (pagina comum)
@@ -339,6 +355,9 @@ def main():
     tk.Label(w, text='Extensoes extras para procurar tambem dentro dos scripts (ex.: lua, cfg, dat):').pack(anchor='w', padx=8)
     extras_caixa = tk.Entry(w, width=60)
     extras_caixa.pack(anchor='w', padx=8)
+    tk.Label(w, text='Cookies para areas que pedem login (so sites seus; um por linha: site.com: cookie):').pack(anchor='w', padx=8)
+    cookies_caixa = scrolledtext.ScrolledText(w, width=96, height=2)
+    cookies_caixa.pack(padx=8)
     campos = {}
     linha = tk.Frame(w)
     linha.pack(anchor='w', padx=8, pady=4)
@@ -383,7 +402,9 @@ def main():
             filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
             pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(), formularios=var['form'].get(),
             ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}, outros=tipos['Outros'].get(),
-            extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x])).start()
+            extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x],
+            cookies={L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
+                     L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()})).start()
 
     botoes = tk.Frame(w)
     botoes.pack(anchor='w', padx=8, pady=4)

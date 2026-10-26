@@ -24,6 +24,7 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 - Campo **Extensoes extras** (ex.: `lua, cfg`): procura essas extensoes tambem dentro de scripts, em caminhos relativos e absolutos.
 - Profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos, retoma (arquivo ja baixado nao baixa de novo), ignora dominios de anuncio.
 - **Respeitar robots.txt**: ligado por padrao; so desligar em site do proprio usuario.
+- Campo **Cookies** (so sites seus): para areas que pedem login (free/VIP). O usuario loga no navegador, copia o cookie e cola um por linha `site.com: cookie`; o painel usa o cookie certo em cada dominio. Login nao passa de um site para outro: um cookie por site, mesmo com a mesma senha.
 
 ## Limites (diga ao usuario)
 - Nao faz login. Botoes de download (form `POST` com `_token` e so campos escondidos): so com a caixa **Botoes de download (so site proprio)**, desligada por padrao, e so no mesmo site; nunca envia form com campo de texto/senha.

@@ -8,7 +8,7 @@ sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext = sys.mod
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 
-PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a>
+PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -18,6 +18,11 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == '/vip':  # so abre com o cookie do login
+            ok = 'logado=sim' in (self.headers.get('Cookie') or '')
+            self.send_response(200 if ok else 403); self.end_headers()
+            self.wfile.write(b'<html>area vip</html>' if ok else b'')
+            return
         if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1'):
             self.send_response(404); self.end_headers(); return
         corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
@@ -43,7 +48,7 @@ porta = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 raiz = os.path.join(tempfile.mkdtemp(), 'espelho')
 falhas = []
-p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True)
+p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True, cookies={f'127.0.0.1:{porta}': 'logado=sim'})
 site = os.path.join(raiz, f'127.0.0.1_{porta}')
 assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de download'
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
@@ -51,6 +56,7 @@ assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
 assert os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo'
 assert os.path.exists(os.path.join(site, 's', 'x.ps1')), 'qualquer formato por endereco completo'
+assert open(os.path.join(site, 'vip.html')).read() == '<html>area vip</html>', 'area vip com cookie de login'
 assert not falhas, falhas
 mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
 assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'
