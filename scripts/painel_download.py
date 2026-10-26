@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
 
 ANUNCIOS = ('doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com')
-ATTR = re.compile(r'''(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
+ATTR = re.compile(r'''\b(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
 BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
 SRCSET = re.compile(r'''srcset\s*=\s*["']([^"']+)''', re.I)
 ABS = re.compile(r'''https?://[^\s"'<>()\\]+\.(?:css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|rar|gz|tgz|tar|exe|dll|mp3|mp4|avi|mov|wav|json|xml)\b''', re.I)

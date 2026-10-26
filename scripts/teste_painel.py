@@ -21,7 +21,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js'):
             self.send_response(404); self.end_headers(); return
         corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
-                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%23topo"', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
+                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%23topo"; nextHref = "/cap/" + nome', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
         self.send_response(200)
         self.send_header('Set-Cookie', 'sessao=1')
         self.end_headers()
