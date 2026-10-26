@@ -4,31 +4,55 @@
 - filtros no estilo HTTrack, um por linha: +*.pdf (inclui, mesmo de outro site)  -*.gif (exclui)
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora dominios de anuncio
-Le sitemap.xml. Segue href/src/srcset/css url()/@import e enderecos completos dentro de html/css/js. Nao adivinha enderecos."""
+Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
+enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
 import fnmatch, hashlib, html as htmllib, http.cookiejar, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
 
 ANUNCIOS = ('doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com')
-ATTR = re.compile(r'''\b(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
+ATTR = re.compile(r'''\b(?:href|src|xlink:href|poster|background|data|manifest|lowsrc|longdesc|data-[\w-]*(?:src|href|url|file|original|bg|background|download|lazy))\s*=\s*["']([^"'#]+)'''
+                  r'''|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)|\bcontent\s*=\s*["']\d+\s*;\s*url\s*=\s*([^"'#]+)|sourceMappingURL=([^\s"'*]+)''', re.I)
 BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
 SRCSET = re.compile(r'''srcset\s*=\s*["']([^"']+)''', re.I)
-ABS = re.compile(r'''https?://[^\s"'<>()\\/]+/[^\s"'<>()\\]*\.[a-z0-9]{1,8}(?=[?#"'`\s<>()\\,;]|$)''', re.I)  # endereco completo de arquivo, qualquer formato
+ABS = re.compile(r'''https?://[^\s"'<>()\\/]+/[^\s"'<>()\\]*\.[a-z0-9]{1,8}(?:\?[^\s"'`<>()\\]*)?(?=[#"'`\s<>()\\,;]|$)''', re.I)  # endereco completo de arquivo, qualquer formato
 
 
 GRUPOS = {
-    'Paginas': ('html', 'htm', 'php', 'asp', 'aspx', 'jsp', 'xhtml', 'shtml', ''),
-    'Estilos e scripts': ('css', 'js', 'mjs', 'map'),
-    'Imagens': ('jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tif', 'tiff', 'avif'),
-    'Documentos': ('pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf', 'odt', 'md', 'epub'),
-    'Dados': ('json', 'xml', 'rss', 'atom', 'yaml', 'yml', 'sql'),
-    'Compactados': ('zip', 'rar', '7z', 'tar', 'tgz', 'gz', 'bz2', 'xz', 'z'),
-    'Programas': ('exe', 'dll', 'msi', 'apk', 'bat', 'sh', 'so', 'bin', 'jar', 'iso', 'dmg'),
-    'Audio': ('mp3', 'mp2', 'wav', 'wma', 'ogg', 'flac', 'aac', 'm4a'),
-    'Video': ('mp4', 'mov', 'mpg', 'mpeg', 'avi', 'asf', 'wmv', 'rm', 'vob', 'qt', 'vid', 'ac3', 'mkv', 'webm', 'flv'),
+    'Paginas': ('html', 'htm', 'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'xhtml', 'shtml', 'phtml', 'erb', 'cshtml', ''),
+    'Estilos e scripts': ('css', 'scss', 'less', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'map', 'wasm', 'webmanifest'),
+    'Codigo': ('lua', 'luac', 'py', 'pyc', 'pyd', 'pyw', 'rb', 'pl', 'tcl', 'r', 'vbs', 'vba', 'ahk', 'au3', 'c', 'h', 'cpp', 'hpp',
+               'cs', 'java', 'kt', 'kts', 'scala', 'go', 'rs', 'swift', 'dart', 'el', 'ex', 'exs', 'erl', 'gd', 'nut', 'sqf', 'ipynb'),
+    'Config': ('ini', 'cfg', 'config', 'toml', 'properties', 'inf', 'reg', 'plist', 'env', 'lst'),
+    'Automacao e DevOps': ('sh', 'bash', 'ps1', 'psm1', 'psd1', 'bat', 'cmd', 'conf', 'lock', 'htaccess', 'dockerignore', 'gitignore',
+                           'dockerfile', 'makefile', 'procfile', 'jenkinsfile'),
+    'Banco de dados': ('sql', 'sqlite', 'db', 'mdb', 'graphql', 'gql', 'prisma', 'mongo', 'bson'),
+    'Imagens': ('jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico', 'cur', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'heif', 'jxl', 'apng',
+                'psd', 'ai', 'eps', 'tga', 'dds', 'raw', 'cr2', 'nef', 'dng'),
+    'Documentos': ('pdf', 'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'log', 'csv', 'tsv', 'rtf',
+                   'md', 'markdown', 'tex', 'epub', 'mobi', 'azw3', 'fb2', 'djvu', 'chm', 'xps'),
+    'Dados': ('json', 'jsonl', 'jsonld', 'ndjson', 'geojson', 'xml', 'rss', 'atom', 'yaml', 'yml', 'dat', 'proto', 'parquet', 'kml', 'gpx', 'ics', 'vcf'),
+    'Compactados': ('zip', 'rar', '7z', 'tar', 'tgz', 'gz', 'bz2', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'lzh', 'arj', 'cab', 'z'),
+    'Programas': ('exe', 'dll', 'msi', 'msix', 'appx', 'com', 'sys', 'ocx', 'cpl', 'scr', 'drv', 'efi', 'apk', 'xapk', 'apks', 'aab',
+                  'ipa', 'deb', 'rpm', 'appimage', 'pkg', 'dmg', 'dylib', 'so', 'lib', 'bin', 'elf', 'jar', 'war', 'class', 'dex', 'run', 'iso', 'img', 'vhd', 'vmdk', 'crx', 'xpi', 'vsix', 'swf'),
+    'Jogos e 3D': ('pak', 'vpk', 'wad', 'bsp', 'unity3d', 'assets', 'bundle', 'uasset', 'pk3', 'esp', 'esm', 'bsa', 'ba2', 'mod',
+                   'obj', 'fbx', 'gltf', 'glb', 'usdz', 'hdr', 'exr', 'stl', 'blend', 'dae', '3ds', 'mdl', 'ct', 'cetrainer', 'sav', 'rom', 'nds', 'gba'),
+    'Audio': ('mp3', 'mp2', 'wav', 'wma', 'ogg', 'oga', 'opus', 'flac', 'aac', 'm4a', 'aiff', 'mid', 'midi', 'amr'),
+    'Video': ('mp4', 'm4v', 'mov', 'mpg', 'mpeg', 'avi', 'asf', 'wmv', 'rm', 'vob', 'qt', 'vid', 'ac3', 'mkv', 'webm', 'flv', 'ogv',
+              '3gp', 'm3u8', 'm3u', 'mpd', 'srt', 'vtt'),
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
+    'Outros conhecidos': ('torrent', 'crt', 'cer', 'pem', 'gpg', 'sig', 'sha256', 'md5', 'iss', 'nsi'),
 }
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
+DINAMICAS = {'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'shtml', 'phtml', 'erb', 'cshtml'}  # pagina gerada no servidor: salva como .html para abrir offline
+LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 'txt', 'm3u8', 'm3u', 'webmanifest', 'rss', 'atom', 'jsonld',
+       'vue', 'svelte', 'md', 'markdown', 'graphql', 'gql', 'prisma', *GRUPOS['Codigo'], *GRUPOS['Config'], *GRUPOS['Automacao e DevOps']}  # arquivos de texto onde procurar links escondidos
+# nomes que tambem sao palavras de codigo/dominio ("console.log", "site.com"): so contam com '/' no caminho
+SEM_PONTO = {'Dockerfile', 'Makefile', 'Procfile', 'Jenkinsfile'}  # arquivos conhecidos sem extensao
+DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app', 'key', 'sys', 'lib', 'env', 'dat', 'img', 'bin',
+                                                     'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock'}
+QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
+    sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
 NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
@@ -54,7 +78,9 @@ def formularios_de_download(texto, base):
 
 
 def extensao(url):
-    return os.path.splitext(urllib.parse.urlparse(url).path)[1].lstrip('.').lower()
+    """'lua' de x/main.lua; tambem 'htaccess' de /.htaccess e 'dockerfile' de /Dockerfile"""
+    n = os.path.basename(urllib.parse.urlparse(url).path)
+    return n.lower() if n in SEM_PONTO else n.rsplit('.', 1)[1].lower() if '.' in n else ''
 
 
 def caminho_local(raiz, url):
@@ -66,7 +92,9 @@ def caminho_local(raiz, url):
     if p.query:
         base, ext = os.path.splitext(nome)
         nome = base + '_' + hashlib.md5(p.query.encode()).hexdigest()[:8] + (ext or '.html')
-    elif '.' not in os.path.basename(nome):
+    elif '.' not in os.path.basename(nome) and os.path.basename(nome) not in SEM_PONTO:
+        nome += '.html'
+    if extensao(nome) in DINAMICAS:
         nome += '.html'
     return os.path.join(raiz, re.sub(r'[<>:"|?*]', '_', p.netloc), nome)
 
@@ -80,7 +108,11 @@ def base_de(texto, u):
 def links(texto, base, extras=()):
     base = base_de(texto, base)
     texto = re.sub(r'<base\b[^>]*>', '', texto, flags=re.I)  # o <base> nao e link para baixar
+    texto = re.sub(r'\\u002[fF]', '/', texto.replace('\\/', '/'))  # JSON escapa a barra: "https:\/\/site\/x.lua"
     achados = [next(x for x in m if x) for m in ATTR.findall(texto)]
+    achados += [a for a in QUOTADO.findall(texto) if '/' in a or extensao(a.split('#')[0]) not in DUVIDOSAS]
+    if extensao(base) in ('m3u8', 'm3u'):  # playlist: cada linha sem '#' e um pedaco do video
+        achados += [L.strip() for L in texto.splitlines() if L.strip() and not L.startswith('#')]
     if extras:  # extensions the user asked for: also look for them inside scripts ("dir/file.lua", 'https://x/y.lua')
         e = '|'.join(re.escape(x.lstrip('.*')) for x in extras)
         achados += re.findall(r'''["'`]([^"'`\s<>()]+\.(?:%s))(?:\?[^"'`\s]*)?["'`]''' % e, texto, re.I)
@@ -92,7 +124,7 @@ def links(texto, base, extras=()):
     for a in achados:
         if '${' in a or '{{' in a or a.startswith('%23'):  # modelo de JavaScript ("${base}.lua") ou ancora, nao e endereco
             continue
-        u = urllib.parse.urljoin(base, a.strip()).split('#')[0]
+        u = urllib.parse.urljoin(base, htmllib.unescape(a.strip())).split('#')[0]  # &amp; do html vira &
         if u.startswith('http'):
             out.append(u)
     return out
@@ -275,7 +307,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             baixados[0] += 1
             n = baixados[0]
         log(f'{"(ja tinha) " if ja else ""}ok ({n}) {u}')
-        if not dest.lower().endswith(('.html', '.htm', '.css', '.js')):
+        if extensao(dest.replace(os.sep, '/')) not in LER or os.path.getsize(dest) > 20 << 20:  # shortcut: nao procura links em texto > 20 MB
             return []
         try:
             texto = open(dest, encoding='utf-8', errors='replace').read()
@@ -318,7 +350,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             b = base_de(texto, u)
 
             def troca(m):
-                alvo = urllib.parse.urljoin(b, next(x for x in m.groups() if x)).split('#')[0]
+                alvo = urllib.parse.urljoin(b, htmllib.unescape(next(x for x in m.groups() if x))).split('#')[0]
                 if alvo in mapa:
                     return m.group(0).replace(next(x for x in m.groups() if x), os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/'))
                 return m.group(0)
@@ -326,7 +358,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 partes = []
                 for c in m.group(1).split(','):
                     d = c.strip().split(None, 1)
-                    alvo = urllib.parse.urljoin(b, d[0]).split('#')[0] if d else ''
+                    alvo = urllib.parse.urljoin(b, htmllib.unescape(d[0])).split('#')[0] if d else ''
                     d[0:1] = [os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') if alvo in mapa else d[0]] if d else []
                     partes.append(' '.join(d))
                 return m.group(0).replace(m.group(1), ', '.join(partes))

@@ -8,7 +8,8 @@ sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext = sys.mod
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 
-PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a>
+PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a><a href="/loja.php?a=1&amp;b=2">loja</a>
+<div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -23,10 +24,10 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(200 if ok else 403); self.end_headers()
             self.wfile.write(b'<html>area vip</html>' if ok else b'')
             return
-        if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1'):
+        if self.path.split('?')[0] not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1', '/sub/scripts/main.lua', '/cfg/jogo.json', '/pacotes/mod.pak', '/escondido/velho.dll', '/loja.php', '/v/lista.m3u8', '/v/p0.ts', '/x/item.ini', '/cfg/deploy/Dockerfile', '/.htaccess'):
             self.send_response(404); self.end_headers(); return
         corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
-                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%%23topo"; nextHref = "/cap/" + nome; d="http://127.0.0.1:%d/bin/tool.dll?v=1"; p=`http://127.0.0.1:%d/s/x.ps1`' % (porta, porta), '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
+                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%%23topo"; nextHref = "/cap/" + nome; d="http://127.0.0.1:%d/bin/tool.dll?v=1"; p=`http://127.0.0.1:%d/s/x.ps1`; require("scripts/main.lua"); console.log("x"); c={"u":"http:\\/\\/127.0.0.1:%d\\/cfg\\/jogo.json"}' % (porta, porta, porta), '/v/lista.m3u8': b'#EXTM3U\n#EXTINF:4,\np0.ts\n', '/cfg/jogo.json': b'{"item": "/x/item.ini", "d": "deploy/Dockerfile", "h": "/.htaccess"}', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
         self.send_response(200)
         self.send_header('Set-Cookie', 'sessao=1')
         self.end_headers()
@@ -54,9 +55,13 @@ assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
 assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
-assert os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo'
+assert [f for f in os.listdir(os.path.join(site, 'bin')) if f.endswith('.dll')] and not os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo, com ?v=1, sem duplicar'
 assert os.path.exists(os.path.join(site, 's', 'x.ps1')), 'qualquer formato por endereco completo'
 assert open(os.path.join(site, 'vip.html')).read() == '<html>area vip</html>', 'area vip com cookie de login'
+for c in ('sub/scripts/main.lua', 'cfg/jogo.json', 'x/item.ini', 'pacotes/mod.pak', 'escondido/velho.dll', 'v/p0.ts', 'cfg/deploy/Dockerfile', '.htaccess'):
+    assert os.path.exists(os.path.join(site, c)), 'escondido: ' + c
+loja = [f for f in os.listdir(site) if f.startswith('loja_')]
+assert loja and loja[0].endswith('.php.html'), 'pagina .php salva como .html (com &amp; desfeito)'
 assert not falhas, falhas
 mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
 assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'
