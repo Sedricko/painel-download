@@ -18,10 +18,10 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js'):
+        if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1'):
             self.send_response(404); self.end_headers(); return
         corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
-                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%23topo"; nextHref = "/cap/" + nome', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
+                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%%23topo"; nextHref = "/cap/" + nome; d="http://127.0.0.1:%d/bin/tool.dll?v=1"; p=`http://127.0.0.1:%d/s/x.ps1`' % (porta, porta), '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
         self.send_response(200)
         self.send_header('Set-Cookie', 'sessao=1')
         self.end_headers()
@@ -49,6 +49,8 @@ assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
 assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
+assert os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo'
+assert os.path.exists(os.path.join(site, 's', 'x.ps1')), 'qualquer formato por endereco completo'
 assert not falhas, falhas
 mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
 assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'

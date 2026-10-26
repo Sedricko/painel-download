@@ -18,7 +18,7 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 - Espelho em pastas (dominio/caminho) com links reescritos para abrir offline; opcional `.zip`.
 - No fim gera `espelho/index.html` (abre o inicio do site, como o HTTrack) e `espelho/mapa.html` (esqueleto: todos os arquivos por pasta, com link direto e endereco original).
 - Le o `sitemap.xml` (e os `Sitemap:` do robots.txt): acha paginas publicas sem link. Caixa **Ler sitemap.xml**.
-- Segue `href`, `src`, `srcset`, css `url()`/`@import` e enderecos completos dentro de html/css/js.
+- Segue `href`, `src`, `srcset`, css `url()`/`@import` e enderecos completos de arquivo (qualquer formato: `.dll`, `.lua`, `.ps1`...) dentro de html/css/js.
 - Filtros estilo HTTrack, um por linha: `+*.pdf` (inclui, mesmo de outro site), `-*.gif` (exclui); `.lua` vale como `+*.lua`.
 - Caixas de tipo de arquivo (Paginas, Estilos e scripts, Imagens, Documentos, Dados, Compactados, Programas, Audio, Video, Fontes, Outros): tudo marcado, o usuario desmarca o que nao quer.
 - Campo **Extensoes extras** (ex.: `lua, cfg`): procura essas extensoes tambem dentro de scripts, em caminhos relativos e absolutos.

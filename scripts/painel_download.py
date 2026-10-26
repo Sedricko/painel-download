@@ -13,7 +13,7 @@ ANUNCIOS = ('doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 
 ATTR = re.compile(r'''\b(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
 BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
 SRCSET = re.compile(r'''srcset\s*=\s*["']([^"']+)''', re.I)
-ABS = re.compile(r'''https?://[^\s"'<>()\\]+\.(?:css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|rar|gz|tgz|tar|exe|dll|mp3|mp4|avi|mov|wav|json|xml)\b''', re.I)
+ABS = re.compile(r'''https?://[^\s"'<>()\\/]+/[^\s"'<>()\\]*\.[a-z0-9]{1,8}(?=[?#"'`\s<>()\\,;]|$)''', re.I)  # endereco completo de arquivo, qualquer formato
 
 
 GRUPOS = {
@@ -270,7 +270,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             enviar_formularios(u)
         novos = []
         for v in links(texto, u, extras):
-            eh_pagina = not (re.search(r'\.(css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|rar|gz|tgz|tar|exe|dll|mp3|mp4|avi|mov|wav|json|xml)(\?|$)', v, re.I) or extensao(v) in {x.lstrip('.*').lower() for x in extras})
+            eh_pagina = extensao(v) in GRUPOS['Paginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and html and prof >= profundidade:
                 continue
             novos.append((v, prof + 1 if eh_pagina else prof))
