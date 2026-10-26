@@ -10,7 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
 
 ANUNCIOS = ('doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com')
-ATTR = re.compile(r'''(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|url\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
+ATTR = re.compile(r'''(?:href|src|data-src|data-original|poster)\s*=\s*["']([^"'#]+)|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)''', re.I)
+BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
 SRCSET = re.compile(r'''srcset\s*=\s*["']([^"']+)''', re.I)
 ABS = re.compile(r'''https?://[^\s"'<>()\\]+\.(?:css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|rar|gz|tgz|tar|exe|dll|mp3|mp4|avi|mov|wav|json|xml)\b''', re.I)
 
@@ -69,7 +70,15 @@ def caminho_local(raiz, url):
     return os.path.join(raiz, re.sub(r'[<>:"|?*]', '_', p.netloc), nome)
 
 
+def base_de(texto, u):
+    """endereco de onde partem os links relativos: a pagina, ou o <base href> dela"""
+    m = BASE.search(texto)
+    return urllib.parse.urljoin(u, htmllib.unescape(m.group(1))) if m else u
+
+
 def links(texto, base, extras=()):
+    base = base_de(texto, base)
+    texto = re.sub(r'<base\b[^>]*>', '', texto, flags=re.I)  # o <base> nao e link para baixar
     achados = [next(x for x in m if x) for m in ATTR.findall(texto)]
     if extras:  # extensions the user asked for: also look for them inside scripts ("dir/file.lua", 'https://x/y.lua')
         e = '|'.join(re.escape(x.lstrip('.*')) for x in extras)
@@ -80,7 +89,7 @@ def links(texto, base, extras=()):
     achados += ABS.findall(texto)
     out = []
     for a in achados:
-        if '${' in a or '{{' in a:  # modelo de JavaScript ("${base}.lua"), nao e endereco
+        if '${' in a or '{{' in a or a.startswith('%23'):  # modelo de JavaScript ("${base}.lua") ou ancora, nao e endereco
             continue
         u = urllib.parse.urljoin(base, a.strip()).split('#')[0]
         if u.startswith('http'):
@@ -264,9 +273,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if not dest.lower().endswith(('.html', '.htm', '.css')):
                 continue
             texto = open(dest, encoding='utf-8', errors='replace').read()
+            b = base_de(texto, u)
 
             def troca(m):
-                alvo = urllib.parse.urljoin(u, next(x for x in m.groups() if x)).split('#')[0]
+                alvo = urllib.parse.urljoin(b, next(x for x in m.groups() if x)).split('#')[0]
                 if alvo in mapa:
                     return m.group(0).replace(next(x for x in m.groups() if x), os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/'))
                 return m.group(0)
@@ -274,11 +284,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 partes = []
                 for c in m.group(1).split(','):
                     d = c.strip().split(None, 1)
-                    alvo = urllib.parse.urljoin(u, d[0]).split('#')[0] if d else ''
+                    alvo = urllib.parse.urljoin(b, d[0]).split('#')[0] if d else ''
                     d[0:1] = [os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') if alvo in mapa else d[0]] if d else []
                     partes.append(' '.join(d))
                 return m.group(0).replace(m.group(1), ', '.join(partes))
-            novo = SRCSET.sub(troca_set, ATTR.sub(troca, texto))
+            novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, texto)), flags=re.I)  # links ja viraram caminhos locais
             if novo != texto:
                 open(dest, 'w', encoding='utf-8').write(novo)
     if gerar_zip:

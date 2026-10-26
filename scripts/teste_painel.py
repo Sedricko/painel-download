@@ -8,7 +8,7 @@ sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext = sys.mod
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 
-PAGINA = b'''<html><a href="/outra">outra</a>
+PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -18,7 +18,10 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        corpo = {'/': PAGINA, '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
+        if self.path not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js'):
+            self.send_response(404); self.end_headers(); return
+        corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
+                 '/sub/app.js': b'URL.createObjectURL(blob); a.href="%23topo"', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
         self.send_response(200)
         self.send_header('Set-Cookie', 'sessao=1')
         self.end_headers()
@@ -39,8 +42,12 @@ srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
 porta = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 raiz = os.path.join(tempfile.mkdtemp(), 'espelho')
-p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, print, threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True)
+falhas = []
+p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True)
 site = os.path.join(raiz, f'127.0.0.1_{porta}')
 assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de download'
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
+assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
+assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
+assert not falhas, falhas
 print('TESTE OK')
