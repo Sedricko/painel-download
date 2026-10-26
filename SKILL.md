@@ -25,11 +25,14 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 - **Respeitar robots.txt**: ligado por padrao; so desligar em site do proprio usuario.
 
 ## Limites (diga ao usuario)
-- Nao faz login, nao envia formularios (`POST` com token): downloads por botao de formulario o usuario baixa no navegador.
+- Nao faz login. Botoes de download (form `POST` com `_token` e so campos escondidos): so com a caixa **Botoes de download (so site proprio)**, desligada por padrao, e so no mesmo site; nunca envia form com campo de texto/senha.
 - Nao acha nomes montados por codigo (`"dir/" + nome + ".lua"`), nem conteudo que so aparece depois de JavaScript.
 - Nao adivinha enderecos nem varre servidores. Nao use para contornar protecoes, nem para CDNs/buckets de terceiros.
 - Arquivos `.exe`/`.dll` ficam parados no zip; o usuario nao deve abrir os de fonte desconhecida.
 - Erros `404` no log costumam ser textos de JavaScript que pareciam enderecos; sem problema.
+
+## Teste
+`python scripts/teste_painel.py` (sem internet, sem janela): servidor local com botao de download, form de login e sitemap.
 
 ## Dicas
 - Site grande: profundidade 2-3, "So o mesmo site" marcado, limite 100-300 paginas.

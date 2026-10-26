@@ -5,7 +5,7 @@
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora dominios de anuncio
 Le sitemap.xml. Segue href/src/srcset/css url()/@import e enderecos completos dentro de html/css/js. Nao adivinha enderecos."""
-import fnmatch, hashlib, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
+import fnmatch, hashlib, html as htmllib, http.cookiejar, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
 
@@ -28,6 +28,27 @@ GRUPOS = {
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
 }
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
+NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))  # guarda o cookie da sessao, como o navegador
+FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
+
+
+def atributo(tag, nome):
+    m = re.search(r'''\b%s\s*=\s*["']([^"']*)''' % nome, tag, re.I)
+    return htmllib.unescape(m.group(1)) if m else ''
+
+
+def formularios_de_download(texto, base):
+    """[(action, dados)] dos forms POST que so tem campos escondidos (botao de download, nunca login/busca)"""
+    out = []
+    for attrs, corpo in FORM.findall(texto):
+        if atributo(attrs, 'method').lower() != 'post':
+            continue
+        campos = re.findall(r'<input\b[^>]*>', corpo, re.I)
+        if any(atributo(c, 'type').lower() not in ('hidden', 'submit') for c in campos) or re.search(r'<(textarea|select)\b', corpo, re.I):
+            continue
+        dados = {atributo(c, 'name'): atributo(c, 'value') for c in campos if atributo(c, 'type').lower() == 'hidden' and atributo(c, 'name')}
+        out.append((urllib.parse.urljoin(base, atributo(attrs, 'action') or base), dados))
+    return out
 
 
 def extensao(url):
@@ -89,7 +110,7 @@ def ler_sitemaps(sites, log):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True):
+             sitemap=True, formularios=False):
     os.makedirs(raiz, exist_ok=True)
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
     filtros = '\n'.join(('+*' + f.strip() if f.strip().startswith('.') else f) for f in filtros.splitlines())  # '.lua' means +*.lua
@@ -138,7 +159,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if espera > 0:
                 time.sleep(espera)
             try:
-                r = urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30)
+                r = NAVEGADOR.open(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30)
                 if int(r.headers.get('Content-Length') or 0) > max_mb << 20:
                     log(f'pulei {u}: maior que {max_mb} MB')
                     return None, False
@@ -159,6 +180,38 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 time.sleep(1 + tentativa)
         return None, False
 
+    def enviar_formularios(u):
+        """so no site do proprio usuario: abre a pagina de novo (token novo) e aperta os botoes de download"""
+        try:
+            texto = NAVEGADOR.open(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30).read().decode('utf-8', 'replace')
+        except Exception as e:
+            log(f'falhou {u}: {e}')
+            return
+        for acao, dados in formularios_de_download(texto, u):
+            if urllib.parse.urlparse(acao).netloc not in dominios or not permitido(acao):
+                continue
+            time.sleep(pausa)
+            try:
+                r = NAVEGADOR.open(urllib.request.Request(acao, data=urllib.parse.urlencode(dados).encode(),
+                                                          headers={'User-Agent': 'leitura-pessoal', 'Referer': u}), timeout=30)
+                nome = re.search(r'''filename\*?=(?:UTF-8'')?["']?([^"';]+)''', r.headers.get('Content-Disposition') or '', re.I)
+                if not nome:
+                    continue  # nao era download (pagina comum)
+                nome = re.sub(r'[<>:"/|?*\\]', '_', os.path.basename(urllib.parse.unquote(nome.group(1)).strip()))
+                dest = os.path.join(os.path.dirname(caminho_local(raiz, u)), nome)
+                dados_arq = r.read((max_mb << 20) + 1)
+                if len(dados_arq) > max_mb << 20:
+                    log(f'pulei {acao}: maior que {max_mb} MB')
+                    continue
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                open(dest, 'wb').write(dados_arq)
+                with lock:
+                    baixados[0] += 1
+                    n = baixados[0]
+                log(f'ok ({n}) formulario {acao} -> {nome}')
+            except Exception as e:
+                log(f'falhou formulario {acao}: {e}')
+
     def tratar(item):
         u, prof = item
         dest, ja = pegar(u)
@@ -176,6 +229,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         except OSError:
             return []
         html = dest.lower().endswith(('.html', '.htm'))
+        if html and formularios:
+            enviar_formularios(u)
         novos = []
         for v in links(texto, u, extras):
             eh_pagina = not (re.search(r'\.(css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|rar|gz|tgz|tar|exe|dll|mp3|mp4|avi|mov|wav|json|xml)(\?|$)', v, re.I) or extensao(v) in {x.lstrip('.*').lower() for x in extras})
@@ -264,10 +319,11 @@ def main():
         tk.Checkbutton(grade, text=rotulo, variable=tipos[nome]).grid(row=i // 4, column=i % 4, sticky='w')
     opcoes = tk.Frame(w)
     opcoes.pack(anchor='w', padx=8)
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip', 'sitemap')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
     for k, t in (('mesmo', 'So o mesmo site'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
-                 ('sitemap', 'Ler sitemap.xml')):
+                 ('sitemap', 'Ler sitemap.xml'), ('form', 'Botoes de download (so site proprio)')):
         tk.Checkbutton(opcoes, text=t, variable=var[k]).pack(side='left')
+    var['form'].set(False)
     parar = threading.Event()
     registro = scrolledtext.ScrolledText(w, width=96, height=14, state='disabled')
 
@@ -286,7 +342,7 @@ def main():
         threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
             profundidade=int(campos['prof'].get()), limite=int(campos['lim'].get()), mesmo_site=var['mesmo'].get(),
             filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
-            pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(),
+            pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(), formularios=var['form'].get(),
             ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}, outros=tipos['Outros'].get(),
             extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x])).start()
 
