@@ -80,6 +80,8 @@ def links(texto, base, extras=()):
     achados += ABS.findall(texto)
     out = []
     for a in achados:
+        if '${' in a or '{{' in a:  # modelo de JavaScript ("${base}.lua"), nao e endereco
+            continue
         u = urllib.parse.urljoin(base, a.strip()).split('#')[0]
         if u.startswith('http'):
             out.append(u)
