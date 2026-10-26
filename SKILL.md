@@ -16,6 +16,7 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 
 ## O que o painel faz
 - Espelho em pastas (dominio/caminho) com links reescritos para abrir offline; opcional `.zip`.
+- Le o `sitemap.xml` (e os `Sitemap:` do robots.txt): acha paginas publicas sem link. Caixa **Ler sitemap.xml**.
 - Segue `href`, `src`, `srcset`, css `url()`/`@import` e enderecos completos dentro de html/css/js.
 - Filtros estilo HTTrack, um por linha: `+*.pdf` (inclui, mesmo de outro site), `-*.gif` (exclui); `.lua` vale como `+*.lua`.
 - Caixas de tipo de arquivo (Paginas, Estilos e scripts, Imagens, Documentos, Dados, Compactados, Programas, Audio, Video, Fontes, Outros): tudo marcado, o usuario desmarca o que nao quer.

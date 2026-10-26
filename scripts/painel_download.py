@@ -4,7 +4,7 @@
 - filtros no estilo HTTrack, um por linha: +*.pdf (inclui, mesmo de outro site)  -*.gif (exclui)
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora dominios de anuncio
-Segue href/src/srcset/css url()/@import e enderecos completos dentro de html/css/js. Nao adivinha enderecos."""
+Le sitemap.xml. Segue href/src/srcset/css url()/@import e enderecos completos dentro de html/css/js. Nao adivinha enderecos."""
 import fnmatch, hashlib, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
@@ -65,8 +65,31 @@ def links(texto, base, extras=()):
     return out
 
 
+def ler_sitemaps(sites, log):
+    """enderecos <loc> do /sitemap.xml e dos 'Sitemap:' do robots.txt (segue indices de sitemap)"""
+    def baixar(u):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30).read().decode('utf-8', 'replace')
+        except Exception:
+            return ''
+    fila = [s + '/sitemap.xml' for s in sites] + [m for s in sites for m in re.findall(r'(?im)^\s*sitemap:\s*(\S+)', baixar(s + '/robots.txt'))]
+    vistos, achados = set(), []
+    while fila and len(vistos) < 100:  # shortcut: le no maximo 100 sitemaps e ignora .xml.gz; aumentar se algum site precisar
+        s = fila.pop()
+        if s in vistos:
+            continue
+        vistos.add(s)
+        for loc in re.findall(r'<loc>\s*([^<\s]+)', baixar(s)):
+            loc = loc.replace('&amp;', '&')
+            (fila if '<sitemapindex' in loc or re.search(r'\.xml(\?|$)', loc, re.I) else achados).append(loc)
+    if achados:
+        log(f'sitemap: {len(achados)} enderecos')
+    return achados
+
+
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
-             conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=()):
+             conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
+             sitemap=True):
     os.makedirs(raiz, exist_ok=True)
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
     filtros = '\n'.join(('+*' + f.strip() if f.strip().startswith('.') else f) for f in filtros.splitlines())  # '.lua' means +*.lua
@@ -162,6 +185,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         return novos
 
     nivel = [(u, 0) for u in urls]
+    if sitemap:  # sitemap.xml lista paginas publicas que nenhum link mostra
+        for v in ler_sitemaps({f'{urllib.parse.urlparse(u).scheme}://{urllib.parse.urlparse(u).netloc}' for u in urls}, log):
+            if v not in feitos and permitido(v):
+                feitos.add(v)
+                nivel.append((v, 0))
     with ThreadPoolExecutor(conexoes) as pool:
         while nivel and baixados[0] < limite and not parar.is_set():
             prox = []
@@ -236,8 +264,9 @@ def main():
         tk.Checkbutton(grade, text=rotulo, variable=tipos[nome]).grid(row=i // 4, column=i % 4, sticky='w')
     opcoes = tk.Frame(w)
     opcoes.pack(anchor='w', padx=8)
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip')}
-    for k, t in (('mesmo', 'So o mesmo site'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip')):
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip', 'sitemap')}
+    for k, t in (('mesmo', 'So o mesmo site'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
+                 ('sitemap', 'Ler sitemap.xml')):
         tk.Checkbutton(opcoes, text=t, variable=var[k]).pack(side='left')
     parar = threading.Event()
     registro = scrolledtext.ScrolledText(w, width=96, height=14, state='disabled')
@@ -257,7 +286,7 @@ def main():
         threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
             profundidade=int(campos['prof'].get()), limite=int(campos['lim'].get()), mesmo_site=var['mesmo'].get(),
             filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
-            pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(),
+            pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(),
             ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}, outros=tipos['Outros'].get(),
             extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x])).start()
 
