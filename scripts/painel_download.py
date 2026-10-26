@@ -380,7 +380,6 @@ def main():
     tk.Label(w, text='Enderecos (um por linha):').pack(anchor='w', padx=8, pady=(8, 0))
     caixa = scrolledtext.ScrolledText(w, width=96, height=4)
     caixa.pack(padx=8)
-    caixa.insert('1.0', 'https://engineering.nordeus.com/\n')
     tk.Label(w, text='Filtros (+*.pdf inclui, mesmo de outro site; -*.gif exclui):').pack(anchor='w', padx=8)
     filtros = scrolledtext.ScrolledText(w, width=96, height=3)
     filtros.pack(padx=8)
