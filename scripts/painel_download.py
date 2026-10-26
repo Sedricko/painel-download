@@ -119,6 +119,32 @@ def ler_sitemaps(sites, log):
     return achados
 
 
+def gerar_indice(raiz, inicio, origem):
+    """espelho/index.html (abre o inicio do site) e espelho/mapa.html (esqueleto: todos os arquivos com link direto)"""
+    esc, pastas = htmllib.escape, {}
+    for d, _, fs in os.walk(raiz):
+        for f in sorted(fs):
+            if not (d == raiz and f in ('index.html', 'mapa.html')) and not f.endswith('.part'):
+                pastas.setdefault(os.path.relpath(d, raiz).replace(os.sep, '/'), []).append(os.path.join(d, f))
+    rel = lambda c: urllib.parse.quote(os.path.relpath(c, raiz).replace(os.sep, '/'))
+    corpo = []
+    for pasta in sorted(pastas):
+        corpo.append(f'<h2>{esc(pasta)}/</h2><ul>')
+        for c in pastas[pasta]:
+            u = origem.get(c)
+            corpo.append(f'<li><a href="{rel(c)}">{esc(os.path.basename(c))}</a> <small>{os.path.getsize(c) // 1024} KB'
+                         + (f' &middot; <a href="{esc(u)}">{esc(u)}</a>' if u else '') + '</small></li>')
+        corpo.append('</ul>')
+    estilo = '<meta charset="utf-8"><style>body{font-family:sans-serif;margin:0}nav{background:#222;padding:8px}nav a{color:#fff;margin-right:16px}main{padding:0 16px}small{color:#777}</style>'
+    nav = '<nav><a href="index.html">Inicio do site</a><a href="mapa.html">Mapa dos arquivos</a></nav>'
+    total = sum(len(v) for v in pastas.values())
+    open(os.path.join(raiz, 'mapa.html'), 'w', encoding='utf-8').write(
+        f'<!doctype html><title>Mapa do espelho</title>{estilo}{nav}<main><h1>{total} arquivos</h1>{"".join(corpo)}</main>')
+    open(os.path.join(raiz, 'index.html'), 'w', encoding='utf-8').write(
+        f'<!doctype html><title>Espelho offline</title>{estilo}<style>iframe{{border:0;width:100%;height:calc(100vh - 40px)}}</style>{nav}'
+        + (f'<iframe src="{rel(inicio)}"></iframe>' if inicio and os.path.exists(inicio) else '<main><p>Inicio nao baixado; veja o mapa.</p></main>'))
+
+
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
              sitemap=True, formularios=False):
@@ -291,6 +317,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, texto)), flags=re.I)  # links ja viraram caminhos locais
             if novo != texto:
                 open(dest, 'w', encoding='utf-8').write(novo)
+    gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()})
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:
             for d, _, fs in os.walk(raiz):

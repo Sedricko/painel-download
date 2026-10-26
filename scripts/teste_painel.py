@@ -50,4 +50,7 @@ assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
 assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
 assert not falhas, falhas
+mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
+assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'
+assert f'src="127.0.0.1_{porta}/index.html"' in open(os.path.join(raiz, 'index.html'), encoding='utf-8').read(), 'inicio'
 print('TESTE OK')
