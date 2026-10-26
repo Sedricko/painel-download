@@ -410,7 +410,7 @@ def main():
     opcoes = tk.Frame(w)
     opcoes.pack(anchor='w', padx=8)
     var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
-    for k, t in (('mesmo', 'So o mesmo site'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
+    for k, t in (('mesmo', 'So o mesmo site (desmarque p/ seguir links de outros sites)'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
                  ('sitemap', 'Ler sitemap.xml'), ('form', 'Botoes de download (so site proprio)')):
         tk.Checkbutton(opcoes, text=t, variable=var[k]).pack(side='left')
     var['form'].set(False)
