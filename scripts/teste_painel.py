@@ -366,3 +366,19 @@ baixou = [m for m in lf if m.startswith('ok (') or m.startswith('(ja tinha) ok (
 assert any(f'127.0.0.1:{p2}/' in m for m in baixou), 'pegou o endereco que faltou'
 assert not any('/vip' in m or '/ferramenta' in m for m in baixou), 'nao seguiu links novos (nao revarre o site)'
 print('TESTE SO FALTOU OK')
+
+# --- "Só o que faltou" ignora lixo conhecido vindo de uma falhas.txt antiga ---
+assert p.pulavel('https://x.fandom.com/wiki/SUNSET1.jpg'), 'nome de imagem como pagina e pulavel'
+assert p.pulavel('https://x.fandom.com/wiki/SPELLS?action=edit'), 'botao editar e pulavel'
+assert not p.pulavel('https://x.fandom.com/wiki/SPELLS'), 'pagina real nao e pulavel'
+assert not p.pulavel('https://static.wikia.nocookie.net/x/a/RM2.jpg/revision/latest'), 'imagem real nao e pulavel'
+tmpi = os.path.join(tempfile.mkdtemp(), 'espelho')
+os.makedirs(os.path.join(tmpi, '.painel'))
+open(os.path.join(tmpi, '.painel', 'falhas.txt'), 'w').write(
+    f'http://127.0.0.1:{p2}/  -> erro de rede\n'
+    'https://x.fandom.com/wiki/SUNSET1.jpg  -> nome de imagem\n'
+    'https://x.fandom.com/wiki/SPELLS?action=edit  -> editar\n')
+li = []
+p.espelhar(['http://nao.invalido/'], tmpi, li.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, so_faltou=True)
+assert any('2 ignorados' in m for m in li), 'ignora os 2 lixos conhecidos'
+print('TESTE SO FALTOU IGNORA LIXO OK')

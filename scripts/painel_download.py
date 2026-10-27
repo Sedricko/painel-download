@@ -82,7 +82,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 57  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 58  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -217,6 +217,14 @@ def extensao(url):
         if '.' in parte and parte.rsplit('.', 1)[1].lower() in CONHECIDAS:
             return parte.rsplit('.', 1)[1].lower()
     return ''
+
+
+def pulavel(url):
+    """endereco que nunca e arquivo real (nome de imagem aberto como pagina, botao de editar/historico): nem tentar, mesmo vindo de uma falhas.txt antiga"""
+    base = os.path.basename(urllib.parse.urlparse(url).path)
+    if re.search(r'action=(edit|purge|history|credits)|redlink=1', url):
+        return True
+    return '/wiki/' in url and '.' in base and ':' not in base and extensao(url) in CONHECIDAS
 
 
 def motivo_falha(url, codigo):
@@ -424,9 +432,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     if so_faltou:  # nao revarre o site: pega so os enderecos que ficaram na falhas.txt da ultima rodada
         linhas = (open(os.path.join(painel, 'falhas.txt'), encoding='utf-8').read().splitlines()
                   if os.path.exists(os.path.join(painel, 'falhas.txt')) else [])
-        urls = [L.split('  ', 1)[0].strip() for L in linhas if L[:4].lower() == 'http']
+        todas = [L.split('  ', 1)[0].strip() for L in linhas if L[:4].lower() == 'http']
+        urls = [u for u in todas if not pulavel(u)]  # ignora o lixo conhecido mesmo numa falhas.txt antiga
         profundidade, sitemap = 0, False  # nao segue links nem sitemap: so a lista do que faltou
-        log(f'só o que faltou: {len(urls)} endereços que faltaram na última vez')
+        ignorados = len(todas) - len(urls)
+        log(f'só o que faltou: {len(urls)} endereços a tentar' + (f' ({ignorados} ignorados: nunca são arquivo real)' if ignorados else ''))
     original = lambda dest: os.path.join(painel, 'orig', os.path.relpath(dest, raiz))
     frescos, falhas, pai, palpites, certos = set(), {}, {}, set(), set()  # pai: bases das paginas que carregaram cada script
     cookies = cookies or {}
