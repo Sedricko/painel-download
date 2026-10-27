@@ -10,9 +10,12 @@
 - perfis + agendamento: python painel_download.py --perfil nome [--perfil outro] [--atualizar] roda sem janela
 - se o DNS do PC estiver quebrado, resolve o endereco pela internet (DoH 1.1.1.1/8.8.8.8), como o navegador
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
-enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
-import fnmatch, functools, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, socket, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
-from concurrent.futures import ThreadPoolExecutor
+enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos.
+- opcional: renderiza as paginas num navegador de verdade (Playwright) e pega o que o JavaScript monta e pede"""
+import codecs, fnmatch, functools, gzip, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, socket, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
+import queue
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); vale para o site e todos os subdominios
@@ -82,7 +85,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 63  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 64  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -152,6 +155,86 @@ NAO_BAIXADO = ('''<!doctype html><meta charset="utf-8"><title>Nao baixado</title
                '''if (/^https?:/.test(u)) document.getElementById('ir').href = u; else document.getElementById('ir').remove()</script>''')
 PRECONEXAO = re.compile(r'''<link\b[^>]*\brel\s*=\s*["']?(?:preconnect|dns-prefetch)\b[^>]*>''', re.I)
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
+
+
+def ler_txt(c):
+    """(texto, codificacao) sem perder bytes: pagina em iso-8859-1/windows-1252 volta igual ao ser gravada"""
+    b = open(c, 'rb').read()
+    try:
+        return b.decode('utf-8'), 'utf-8'
+    except UnicodeDecodeError:
+        pass
+    m = re.search(rb'''charset\s*=\s*["']?([\w-]+)''', b[:4096], re.I)
+    try:
+        enc = codecs.lookup(m.group(1).decode('ascii')).name if m else 'cp1252'
+    except LookupError:
+        enc = 'cp1252'
+    return b.decode(enc, 'surrogateescape'), enc
+
+
+def grava_txt(c, texto, enc):
+    open(c, 'w', encoding=enc, errors='surrogateescape' if enc != 'utf-8' else 'xmlcharrefreplace').write(texto)
+
+
+class Renderizador:
+    """navegador (Playwright) numa linha propria: a API sync so funciona na linha que a criou"""
+    def __init__(self, log, cookies):
+        self.fila, self.log, self.cookies, self.linha = queue.Queue(), log, cookies, None
+
+    def _roda(self):
+        try:
+            from playwright.sync_api import sync_playwright
+            pw = sync_playwright().start()
+            for canal in (None, 'msedge', 'chrome'):  # Edge/Chrome do PC: dispensa o 'playwright install'
+                try:
+                    nav = pw.chromium.launch(channel=canal) if canal else pw.chromium.launch()
+                    break
+                except Exception:
+                    if canal == 'chrome':
+                        pw.stop()
+                        raise
+        except Exception as e:
+            self.log(f'aviso: renderizar JavaScript precisa do Playwright (pip install playwright && playwright install chromium): {e}')
+            while (item := self.fila.get()) is not None:  # sem navegador: responde vazio e segue sem renderizar
+                item[1].append(None); item[2].set()
+            return
+        ctx = nav.new_context(user_agent=UA)
+        for dom, ck in self.cookies.items():  # cookie so no dominio dele (nunca vai para CDN/anuncio)
+            host = dom.split(':')[0]
+            ctx.add_cookies([{'name': n.strip(), 'value': v.strip(), 'domain': host, 'path': '/'}
+                             for n, _, v in (x.partition('=') for x in ck.split(';')) if n.strip()])
+        while (item := self.fila.get()) is not None:
+            u, saida, pronto = item
+            pg, pedidos = ctx.new_page(), []
+            pg.on('request', lambda r: pedidos.append(r.url))  # o que o JavaScript pediu: acha nomes montados por codigo
+            try:
+                pg.goto(u, wait_until='networkidle', timeout=45000)
+                for _ in range(5):  # rola a pagina: carrega imagens preguicosas e listas infinitas
+                    pg.mouse.wheel(0, 20000)
+                    pg.wait_for_timeout(400)
+                saida.append((pg.content(), pedidos))
+            except Exception as e:
+                self.log(f'aviso: nao consegui renderizar {u}: {e}')
+                saida.append(None)
+            finally:
+                pg.close()
+                pronto.set()
+        ctx.close(); nav.close(); pw.stop()
+
+    def __call__(self, u):
+        """(html depois do JavaScript, [enderecos pedidos]) ou None"""
+        if not self.linha:
+            self.linha = threading.Thread(target=self._roda, daemon=True)
+            self.linha.start()
+        saida, pronto = [], threading.Event()
+        self.fila.put((u, saida, pronto))
+        pronto.wait()
+        return saida[0]
+
+    def fechar(self):
+        if self.linha:
+            self.fila.put(None)
+            self.linha.join(30)
 
 
 def atributo(tag, nome):
@@ -306,19 +389,20 @@ def ler_sitemaps(sites, log):
     """enderecos <loc> do /sitemap.xml e dos 'Sitemap:' do robots.txt (segue indices de sitemap)"""
     def baixar(u):
         try:
-            return urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': UA}), timeout=30).read().decode('utf-8', 'replace')
+            b = urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': UA}), timeout=30).read()
+            return (gzip.decompress(b) if b[:2] == b'\x1f\x8b' else b).decode('utf-8', 'replace')  # sitemap.xml.gz
         except Exception:
             return ''
     fila = [s + '/sitemap.xml' for s in sites] + [m for s in sites for m in re.findall(r'(?im)^\s*sitemap:\s*(\S+)', baixar(s + '/robots.txt'))]
     vistos, achados = set(), []
-    while fila and len(vistos) < 100:  # shortcut: le no maximo 100 sitemaps e ignora .xml.gz; aumentar se algum site precisar
+    while fila and len(vistos) < 1000:  # shortcut: le no maximo 1000 sitemaps; aumentar se algum site precisar
         s = fila.pop()
         if s in vistos:
             continue
         vistos.add(s)
         for loc in re.findall(r'<loc>\s*([^<\s]+)', baixar(s)):
             loc = loc.replace('&amp;', '&')
-            (fila if '<sitemapindex' in loc or re.search(r'\.xml(\?|$)', loc, re.I) else achados).append(loc)
+            (fila if '<sitemapindex' in loc or re.search(r'\.xml(\.gz)?(\?|$)', loc, re.I) else achados).append(loc)
     if achados:
         log(f'sitemap: {len(achados)} enderecos')
     return achados
@@ -420,7 +504,7 @@ def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False, renderizar=False):
     os.makedirs(raiz, exist_ok=True)
     log_dns[0] = log
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
@@ -443,6 +527,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     cookies = cookies or {}
     bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
+    render = Renderizador(log, cookies) if renderizar else None
 
     def cab(u, extra=None):
         """cabecalhos; junta o cookie da sessao (JAR) com o cookie do login do dominio (areas que pedem login)"""
@@ -565,6 +650,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if e.code == 416:  # o .part ja estava completo ou mudou: recomeca
                     os.remove(part)
                     continue
+                if e.code in (429, 503) and tentativa < 2:  # o servidor pediu calma: espera o que ele mandou (ate 60 s)
+                    ra = e.headers.get('Retry-After') or ''
+                    time.sleep(min(60, int(ra) if ra.isdigit() else 5))
+                    continue
                 if e.code in (403, 404, 410) and u in palpites and u not in certos:
                     return None, False
                 if tentativa == 2 or e.code in (403, 404, 410):
@@ -629,10 +718,14 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         html = dest.lower().endswith(('.html', '.htm'))
         if html and formularios:
             enviar_formularios(u)
-        novos = []
+        novos, pedidos_js = [], []
+        if html and render and not ja and (feito := render(u)):  # grava o que o JavaScript montou (texto, listas, imagens)
+            texto, pedidos_js = feito
+            texto = re.sub(r'''(<meta\b[^>]*charset\s*=\s*["']?)[\w-]+''', r'\1utf-8', texto, count=1, flags=re.I)  # o navegador ja entrega em unicode
+            grava_txt(dest, texto, 'utf-8')
         if html:
             base = base_de(texto, u)
-        achados = links(texto, u, extras)
+        achados = links(texto, u, extras) + [normal(x.split('#')[0]) for x in pedidos_js if x.startswith('http')]
         if extensao(u) in ('js', 'mjs', 'cjs', 'json'):
             # endereco achado dentro de script e palpite (404/403 nao conta como falha); caminho relativo:
             # fetch('x') vale a partir da pagina e import 'x' a partir do proprio .js, entao tenta os dois
@@ -666,17 +759,22 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 feitos.add(v)
                 nivel.append((v, 0))
     with ThreadPoolExecutor(conexoes) as pool:
-        while nivel and baixados[0] < limite and not parar.is_set():
-            prox = []
-            for novos in pool.map(tratar, nivel[:max(0, limite - baixados[0])]):
-                for v, p in novos:
+        # fila continua: cada conexao pega o proximo assim que termina (um arquivo lento nao segura os outros)
+        fila, pend = deque(nivel), set()
+        while (fila or pend) and not parar.is_set():
+            while fila and len(pend) < conexoes * 2 and baixados[0] + len(pend) < limite:
+                pend.add(pool.submit(tratar, fila.popleft()))
+            if not pend:
+                break  # limite atingido
+            prontos, pend = wait(pend, return_when=FIRST_COMPLETED)
+            for f in prontos:
+                for v, p in f.result():
                     with lock:
                         if v in feitos:
                             continue
                         feitos.add(v)
                     if permitido(v):
-                        prox.append((v, p))
-            nivel = prox
+                        fila.append((v, p))
         repetir = [(u, profundidade) for u, c in falhas.items() if c not in (403, 404, 410)]  # erro de rede: tenta de novo uma vez
         if repetir and not parar.is_set():
             log(f'aviso: tentando de novo {len(repetir)} que falharam...')
@@ -694,6 +792,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if parar.is_set():
                     break
                 tratar(item)
+    if render:
+        render.fechar()
     nao_copiados = {}  # links que a reescrita mandou para nao_baixado.html
     if reescrever:
         fora = os.path.join(raiz, 'nao_baixado.html')
@@ -705,10 +805,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             reescritos.add(dest)
             if dest in frescos:  # guarda o original antes de reescrever (para atualizar depois)
                 os.makedirs(os.path.dirname(original(dest)), exist_ok=True)
-                texto = open(dest, encoding='utf-8', errors='replace').read()
-                open(original(dest), 'w', encoding='utf-8').write(texto)
+                texto, enc = ler_txt(dest)
+                grava_txt(original(dest), texto, enc)
             elif os.path.exists(original(dest)):
-                texto = open(original(dest), encoding='utf-8', errors='replace').read()
+                texto, enc = ler_txt(original(dest))
             else:
                 continue  # ja reescrito por uma versao antiga do painel
             b = base_de(texto, u)
@@ -757,8 +857,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 novo = re.sub(r'''\s(?:integrity|nonce)\s*=\s*("[^"]*"|'[^']*')''', '', novo, flags=re.I)  # o arquivo local mudou: a assinatura original bloquearia ele
                 novo, n = re.subn(r'<head\b[^>]*>', lambda h: h.group(0) + TRAVA, novo, count=1, flags=re.I)
                 novo = novo if n else TRAVA + novo
-            if novo != open(dest, encoding='utf-8', errors='replace').read():
-                open(dest, 'w', encoding='utf-8').write(novo)
+            if novo != ler_txt(dest)[0]:
+                grava_txt(dest, novo, enc)
     json.dump(estado, open(os.path.join(painel, 'estado.json'), 'w', encoding='utf-8'))
     open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(
         ''.join(f'{u}  -> {motivo_falha(u, c)}' + (f'  [achado em: {origem_link[u]}]' if origem_link.get(u) else '') + '\n' for u, c in falhas.items()))
@@ -782,6 +882,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             for d, ds, fs in os.walk(raiz):
                 ds[:] = [x for x in ds if x != '.painel']
                 for f in fs:
+                    if f.endswith('.part'):  # download cortado: nao e arquivo de verdade
+                        continue
                     z.write(os.path.join(d, f), os.path.relpath(os.path.join(d, f), raiz))
     log(f'PRONTO: {baixados[0]} arquivos em {raiz}' + (' + .zip' if gerar_zip else '') + (' (parado)' if parar.is_set() else ''))
     log_dns[0] = None  # nao usar este log depois que o espelhar acabou
@@ -789,7 +891,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
 PADRAO = dict(enderecos='', pasta='', prof=3, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
-              sitemap=True, form=False, atualizar=False, separados=False, so_coladas=False, leitura=False, so_faltou=False, desmarcados=[], filtros='', extras='')
+              sitemap=True, form=False, render=False, atualizar=False, separados=False, so_coladas=False, leitura=False, so_faltou=False, desmarcados=[], filtros='', extras='')
 
 
 def ler(arquivo):
@@ -818,7 +920,7 @@ def argumentos(cfg):
         limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
         profundidade=0 if c['so_coladas'] else int(c['prof']), sitemap=c['sitemap'] and not c['so_coladas'],
-        formularios=c['form'], atualizar=c['atualizar'] or c['so_faltou'], so_faltou=c['so_faltou'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
+        formularios=c['form'], renderizar=c['render'], atualizar=c['atualizar'] or c['so_faltou'], so_faltou=c['so_faltou'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
         ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
         | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
         extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
@@ -987,8 +1089,9 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados', 'so_coladas', 'leitura', 'so_faltou')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'render', 'atualizar', 'separados', 'so_coladas', 'leitura', 'so_faltou')}
     var['form'].set(False)
+    var['render'].set(False)
     var['atualizar'].set(False)
     var['separados'].set(False)
     var['so_coladas'].set(False)
@@ -1044,6 +1147,8 @@ def main():
     cookies_caixa = texto(avancado, 2)
     cookies_caixa.pack(fill='x')
     ttk.Checkbutton(avancado, text='Apertar botões de download (só no seu próprio site)', variable=var['form'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(10, 0))
+    ttk.Checkbutton(avancado, text='Renderizar JavaScript (sites React/Vue; acha arquivos montados por código; precisa do Playwright, mais lento)',
+                    variable=var['render'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(6, 0))
 
     # barra de acao
     acao = ttk.Frame(corpo, padding=(0, 12))

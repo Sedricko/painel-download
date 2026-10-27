@@ -431,3 +431,54 @@ src = _re.search(r'<img[^>]*\bsrc=["\']([^"\']+)', pag).group(1)
 assert 'nao_baixado' not in src, 'o thumbnail que faltou NAO manda a imagem para nao_baixado'
 assert src.endswith('revision/latest.jpg') or 'revision/latest.jpg' in src, f'usa o full-size local em vez do thumbnail: {src}'
 print('TESTE FALLBACK FULLSIZE OK')
+
+# --- pagina em iso-8859-1 nao vira lixo; sitemap .xml.gz; Retry-After; renderizar JavaScript ---
+import gzip, importlib.util
+LATIN = '<html><head><meta charset="iso-8859-1"></head><body>Ação é ótima <a href="/b.html">b</a></body></html>'.encode('latin-1')
+espera = [0]
+
+
+class H9(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if self.path == '/calma.txt' and not espera[0]:  # primeira vez: 429 com Retry-After
+            espera[0] = time.time()
+            self.send_response(429); self.send_header('Retry-After', '1'); self.end_headers(); return
+        corpo = {'/': LATIN, '/b.html': b'<html>b</html>', '/calma.txt': b'ok',
+                 '/sitemap.xml': b'<sitemapindex><sitemap><loc>http://127.0.0.1:%d/s1.xml.gz</loc></sitemap></sitemapindex>' % porta9,
+                 '/s1.xml.gz': gzip.compress(b'<urlset><url><loc>http://127.0.0.1:%d/calma.txt</loc></url></urlset>' % porta9),
+                 '/js.html': b'<html><body><div id="d"></div><script>var n="mont"+"ado";fetch("/dados/"+n+".json");'
+                             b'document.getElementById("d").textContent="feito pelo JS"</script></body></html>',
+                 '/dados/montado.json': b'{}'}.get(self.path)
+        self.send_response(200 if corpo is not None else 404); self.end_headers()
+        self.wfile.write(corpo or b'')
+
+
+import time
+srv9 = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H9)
+porta9 = srv9.server_address[1]
+threading.Thread(target=srv9.serve_forever, daemon=True).start()
+raiz9 = os.path.join(tempfile.mkdtemp(), 'espelho')
+p.espelhar([f'http://127.0.0.1:{porta9}/'], raiz9, print, threading.Event(), robots=False, pausa=0, gerar_zip=False)
+site9 = os.path.join(raiz9, f'127.0.0.1_{porta9}')
+b = open(os.path.join(site9, 'index.html'), 'rb').read()
+assert 'Ação é ótima'.encode('latin-1') in b and b'b.html' in b and b'Content-Security-Policy' in b, 'iso-8859-1 preservado'
+assert os.path.exists(os.path.join(site9, 'calma.txt')), 'sitemap .xml.gz'
+assert time.time() - espera[0] >= 1, 'Retry-After respeitado'
+print('TESTE CODIFICACAO, SITEMAP GZ E RETRY-AFTER OK')
+
+if importlib.util.find_spec('playwright'):
+    from playwright.sync_api._generated import BrowserType
+    if os.path.exists('/opt/pw-browsers/chromium'):  # ambiente de teste: navegador ja instalado
+        _l = BrowserType.launch
+        BrowserType.launch = lambda self, **k: _l(self, executable_path='/opt/pw-browsers/chromium', **{x: y for x, y in k.items() if x != 'channel'})
+    raizj = os.path.join(tempfile.mkdtemp(), 'espelho')
+    p.espelhar([f'http://127.0.0.1:{porta9}/js.html'], raizj, print, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False, renderizar=True)
+    sitej = os.path.join(raizj, f'127.0.0.1_{porta9}')
+    assert 'feito pelo JS' in open(os.path.join(sitej, 'js.html'), encoding='utf-8').read(), 'html depois do JavaScript'
+    assert os.path.exists(os.path.join(sitej, 'dados', 'montado.json')), 'arquivo com nome montado por codigo'
+    print('TESTE RENDERIZAR OK')
+else:
+    print('(sem playwright: teste de renderizar pulado)')
