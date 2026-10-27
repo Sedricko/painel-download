@@ -82,7 +82,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 60  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 61  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -683,6 +683,17 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             for u, _ in repetir:
                 del falhas[u]
             list(pool.map(tratar, repetir))  # shortcut: nao segue links novos de quem so deu certo na repeticao
+        # 403/429 em arquivo (nao pagina) = CDN estrangulou por excesso de pedidos; espera e tenta um de cada vez
+        estrangulados = [(u, profundidade) for u, c in falhas.items() if c in (403, 429) and extensao(u) not in GRUPOS['Páginas']]
+        if estrangulados and not parar.is_set():
+            log(f'aviso: {len(estrangulados)} arquivos recusados por excesso de pedidos; esperando e tentando devagar...')
+            time.sleep(10)
+            for u, _ in estrangulados:
+                del falhas[u]
+            for item in estrangulados:
+                if parar.is_set():
+                    break
+                tratar(item)
     nao_copiados = {}  # links que a reescrita mandou para nao_baixado.html
     if reescrever:
         fora = os.path.join(raiz, 'nao_baixado.html')

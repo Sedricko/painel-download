@@ -382,3 +382,28 @@ li = []
 p.espelhar(['http://nao.invalido/'], tmpi, li.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, so_faltou=True)
 assert any('2 ignorados' in m for m in li), 'ignora os 2 lixos conhecidos'
 print('TESTE SO FALTOU IGNORA LIXO OK')
+
+# --- CDN que estrangula (403 na 1a vez, 200 na 2a) deve ser tentado de novo ---
+class ST(http.server.BaseHTTPRequestHandler):
+    vistos = set()
+    def log_message(self, *a): pass
+    def do_GET(self):
+        p0 = self.path.split('?')[0]
+        if p0 == '/foto.jpg':  # 403 na primeira vez, ok na repeticao
+            if p0 not in ST.vistos:
+                ST.vistos.add(p0); self.send_response(403); self.end_headers(); return
+            self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.end_headers(); self.wfile.write(b'JPEGDATA'); return
+        if p0 == '/':
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers()
+            self.wfile.write(b'<img src="/foto.jpg">'); return
+        self.send_response(404); self.end_headers()
+srv_t = http.server.ThreadingHTTPServer(('127.0.0.1', 0), ST); pt = srv_t.server_address[1]
+threading.Thread(target=srv_t.serve_forever, daemon=True).start()
+raizt = os.path.join(tempfile.mkdtemp(), 'espelho')
+lt = []
+_sleep = p.time.sleep; p.time.sleep = lambda *a: None  # nao esperar os 10s no teste
+p.espelhar([f'http://127.0.0.1:{pt}/'], raizt, lt.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False)
+p.time.sleep = _sleep
+assert any('excesso de pedidos' in m for m in lt), 'avisa que vai tentar de novo os estrangulados'
+assert os.path.exists(os.path.join(raizt, f'127.0.0.1_{pt}', 'foto.jpg')), 'a imagem 403 foi baixada na repeticao'
+print('TESTE ESTRANGULADO OK')
