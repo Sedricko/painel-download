@@ -351,3 +351,18 @@ assert any(u.endswith('/wiki/File:RM2.jpg') for u in achados), 'a pagina File: c
 # nome de arquivo real escondido em script (com caminho) nao pode ser perdido
 assert any(u.endswith('/js/app.lua') for u in p.links('var x="/js/app.lua"', 'https://s/p')), 'arquivo com caminho em script continua'
 print('TESTE SEM LINK FANTASMA OK')
+
+# --- "Só o que faltou": seed vem da falhas.txt, nao revarre o site ---
+tmpf = os.path.join(tempfile.mkdtemp(), 'espelho')
+os.makedirs(os.path.join(tmpf, '.painel'))
+open(os.path.join(tmpf, '.painel', 'falhas.txt'), 'w').write(
+    f'http://127.0.0.1:{p2}/  -> erro de rede (sem resposta do servidor)\n# comentario ignorado\n')
+lf = []
+p.espelhar(['http://nao-usado.invalido/'], tmpf, lf.append, threading.Event(),
+           robots=False, pausa=0, gerar_zip=False, so_faltou=True)
+assert any('só o que faltou' in m for m in lf), 'anuncia o modo'
+# baixou a raiz que estava na falhas.txt, mas NAO seguiu os links dela (prof 0): so 1 arquivo
+baixou = [m for m in lf if m.startswith('ok (') or m.startswith('(ja tinha) ok (')]
+assert any(f'127.0.0.1:{p2}/' in m for m in baixou), 'pegou o endereco que faltou'
+assert not any('/vip' in m or '/ferramenta' in m for m in baixou), 'nao seguiu links novos (nao revarre o site)'
+print('TESTE SO FALTOU OK')
