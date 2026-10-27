@@ -78,6 +78,7 @@ DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app',
                                                      'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock', 'class', 'cmd'}
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
+UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
 NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -251,7 +252,7 @@ def ler_sitemaps(sites, log):
     """enderecos <loc> do /sitemap.xml e dos 'Sitemap:' do robots.txt (segue indices de sitemap)"""
     def baixar(u):
         try:
-            return urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'leitura-pessoal'}), timeout=30).read().decode('utf-8', 'replace')
+            return urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': UA}), timeout=30).read().decode('utf-8', 'replace')
         except Exception:
             return ''
     fila = [s + '/sitemap.xml' for s in sites] + [m for s in sites for m in re.findall(r'(?im)^\s*sitemap:\s*(\S+)', baixar(s + '/robots.txt'))]
@@ -380,7 +381,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
     def cab(u, extra=None):
         """cabecalhos; junta o cookie da sessao (JAR) com o cookie do login do dominio (areas que pedem login)"""
-        h = {'User-Agent': 'leitura-pessoal'}
+        h = {'User-Agent': UA}
         req = urllib.request.Request(u)
         JAR.add_cookie_header(req)  # cookies que o site mandou durante o download
         d = urllib.parse.urlparse(u).netloc
@@ -426,7 +427,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                         r = None  # robots.txt com erro ou inexistente: nada proibido (como o Google faz)
                     rp[h.netloc] = r
             r = rp[h.netloc]
-            if r and not r.can_fetch('leitura-pessoal', u):
+            if r and not r.can_fetch('leitura-pessoal', u):  # casa as regras de User-agent: * do site
                 return 'proibido pelo robots.txt do site'
         return ''
 
