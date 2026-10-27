@@ -82,14 +82,15 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 59  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 60  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
 def versao_nova():
     """texto da versao mais nova no GitHub, ou None (sem internet ou ja atualizado)"""
     try:
-        txt = urllib.request.urlopen(urllib.request.Request(RAW, headers={'User-Agent': UA}), timeout=8).read().decode('utf-8')
+        url = f'{RAW}?nocache={int(time.time())}'  # fura o cache do GitHub (serve copia antiga por ~5 min apos cada envio)
+        txt = urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': UA, 'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}), timeout=8).read().decode('utf-8')
     except Exception:
         return None
     m = re.search(r'^VERSAO_PAINEL = (\d+)', txt, re.M)
