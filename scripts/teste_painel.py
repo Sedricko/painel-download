@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 
 PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a><a href="/loja.php?a=1&amp;b=2">loja</a>
-<div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a>
+<div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a><a href="https://fora.example/pagina">fora</a>
+<script src="/sub/app.js" integrity="sha384-x"></script>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -57,7 +58,7 @@ assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
 assert [f for f in os.listdir(os.path.join(site, 'bin')) if f.endswith('.dll')] and not os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo, com ?v=1, sem duplicar'
 assert os.path.exists(os.path.join(site, 's', 'x.ps1')), 'qualquer formato por endereco completo'
-assert open(os.path.join(site, 'vip.html')).read() == '<html>area vip</html>', 'area vip com cookie de login'
+assert open(os.path.join(site, 'vip.html')).read().endswith('<html>area vip</html>'), 'area vip com cookie de login'
 for c in ('sub/scripts/main.lua', 'cfg/jogo.json', 'x/item.ini', 'pacotes/mod.pak', 'escondido/velho.dll', 'v/p0.ts', 'cfg/deploy/Dockerfile', '.htaccess'):
     assert os.path.exists(os.path.join(site, c)), 'escondido: ' + c
 loja = [f for f in os.listdir(site) if f.startswith('loja_')]
@@ -66,4 +67,8 @@ assert not falhas, falhas
 mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
 assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'
 assert f'src="127.0.0.1_{porta}/index.html"' in open(os.path.join(raiz, 'index.html'), encoding='utf-8').read(), 'inicio'
+ini = open(os.path.join(site, 'index.html'), encoding='utf-8').read()
+assert 'https://fora.example' not in ini and '../nao_baixado.html#https%3A%2F%2Ffora.example%2Fpagina' in ini, 'link de fora nao abre a internet'
+assert 'Content-Security-Policy' in ini and 'integrity' not in ini, 'trava de rede e sem integrity'
+assert 'href="http' not in mapa, 'mapa sem links para a internet'
 print('TESTE OK')

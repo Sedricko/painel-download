@@ -1,6 +1,7 @@
 """Painel para espelhar paginas e arquivos publicos para leitura offline (alternativa leve ao HTTrack).
 
-- espelho em pastas (dominio/caminho), com links reescritos para abrir offline; opcional: .zip no fim
+- espelho em pastas (dominio/caminho), com links reescritos para abrir offline; o que nao foi baixado vai para nao_baixado.html
+  e uma trava (CSP) impede a pagina de acessar a internet; opcional: .zip no fim
 - filtros no estilo HTTrack, um por linha: +*.pdf (inclui, mesmo de outro site)  -*.gif (exclui)
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora dominios de anuncio
@@ -55,6 +56,13 @@ QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
 NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
+# regra do navegador: scripts da pagina nao acessam a internet (so arquivos locais); formularios nao enviam nada
+TRAVA = ('''<meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob: 'unsafe-inline' 'unsafe-eval'; '''
+         '''form-action 'none'">''')
+NAO_BAIXADO = ('''<!doctype html><meta charset="utf-8"><title>Nao baixado</title><body style="font-family:sans-serif;padding:24px">'''
+               '''<h2>Este link nao foi baixado</h2><p>Endereco original (copie se quiser abrir na internet):</p>'''
+               '''<p><code id="u"></code></p><p><a href="javascript:history.back()">Voltar</a></p>'''
+               '''<script>document.getElementById('u').textContent = decodeURIComponent(location.hash.slice(1))</script>''')
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
 
 
@@ -157,7 +165,7 @@ def gerar_indice(raiz, inicio, origem):
     esc, pastas = htmllib.escape, {}
     for d, _, fs in os.walk(raiz):
         for f in sorted(fs):
-            if not (d == raiz and f in ('index.html', 'mapa.html')) and not f.endswith('.part'):
+            if not (d == raiz and f in ('index.html', 'mapa.html', 'nao_baixado.html')) and not f.endswith('.part'):
                 pastas.setdefault(os.path.relpath(d, raiz).replace(os.sep, '/'), []).append(os.path.join(d, f))
     rel = lambda c: urllib.parse.quote(os.path.relpath(c, raiz).replace(os.sep, '/'))
     corpo = []
@@ -166,7 +174,7 @@ def gerar_indice(raiz, inicio, origem):
         for c in pastas[pasta]:
             u = origem.get(c)
             corpo.append(f'<li><a href="{rel(c)}">{esc(os.path.basename(c))}</a> <small>{os.path.getsize(c) // 1024} KB'
-                         + (f' &middot; <a href="{esc(u)}">{esc(u)}</a>' if u else '') + '</small></li>')
+                         + (f' &middot; {esc(u)}' if u else '') + '</small></li>')
         corpo.append('</ul>')
     estilo = '<meta charset="utf-8"><style>body{font-family:sans-serif;margin:0}nav{background:#222;padding:8px}nav a{color:#fff;margin-right:16px}main{padding:0 16px}small{color:#777}</style>'
     nav = '<nav><a href="index.html">Inicio do site</a><a href="mapa.html">Mapa dos arquivos</a></nav>'
@@ -343,26 +351,38 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                         prox.append((v, p))
             nivel = prox
     if reescrever:
+        fora = os.path.join(raiz, 'nao_baixado.html')
+        open(fora, 'w', encoding='utf-8').write(NAO_BAIXADO)
         for u, dest in mapa.items():
-            if not dest.lower().endswith(('.html', '.htm', '.css')):
+            if not dest.lower().endswith(('.html', '.htm', '.xhtml', '.css')):
                 continue
             texto = open(dest, encoding='utf-8', errors='replace').read()
             b = base_de(texto, u)
 
-            def troca(m):
-                alvo = urllib.parse.urljoin(b, htmllib.unescape(next(x for x in m.groups() if x))).split('#')[0]
+            def local(v):
+                """caminho local do link; o que nao foi baixado vai para nao_baixado.html (nunca abre a internet)"""
+                alvo = urllib.parse.urljoin(b, htmllib.unescape(v.strip()))
+                alvo, _, frag = alvo.partition('#')
                 if alvo in mapa:
-                    return m.group(0).replace(next(x for x in m.groups() if x), os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/'))
-                return m.group(0)
+                    return os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') + ('#' + frag if frag else '')
+                if alvo.startswith('http'):
+                    return os.path.relpath(fora, os.path.dirname(dest)).replace(os.sep, '/') + '#' + urllib.parse.quote(alvo, safe='')
+                return v  # data:, mailto:, javascript:
+            def troca(m):
+                v = next(x for x in m.groups() if x)
+                return m.group(0).replace(v, local(v))
             def troca_set(m):  # srcset="a.jpg 1x, b.jpg 2x"
                 partes = []
                 for c in m.group(1).split(','):
                     d = c.strip().split(None, 1)
-                    alvo = urllib.parse.urljoin(b, htmllib.unescape(d[0])).split('#')[0] if d else ''
-                    d[0:1] = [os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') if alvo in mapa else d[0]] if d else []
+                    d[0:1] = [local(d[0])] if d else []
                     partes.append(' '.join(d))
                 return m.group(0).replace(m.group(1), ', '.join(partes))
             novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, texto)), flags=re.I)  # links ja viraram caminhos locais
+            if not dest.lower().endswith('.css'):
+                novo = re.sub(r'''\s(?:integrity|nonce)\s*=\s*("[^"]*"|'[^']*')''', '', novo, flags=re.I)  # o arquivo local mudou: a assinatura original bloquearia ele
+                novo, n = re.subn(r'<head\b[^>]*>', lambda h: h.group(0) + TRAVA, novo, count=1, flags=re.I)
+                novo = novo if n else TRAVA + novo
             if novo != texto:
                 open(dest, 'w', encoding='utf-8').write(novo)
     gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()})
