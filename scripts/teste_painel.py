@@ -217,3 +217,16 @@ forms = '''<form action="/x-download" method="POST"><input type="hidden" name="_
 <form action="/forum/login/" method="POST"><input type="hidden" name="a" value="1"></form>'''
 assert [a for a, _ in p.formularios_de_download(forms, 'https://s.com/')] == ['https://s.com/x-download'], p.formularios_de_download(forms, 'https://s.com/')
 print('TESTE SERVICOS DE ARQUIVO OK')
+
+# --- DNS pela internet quando o DNS do PC falha ---
+import socket as _sock
+chamou = []
+_orig_resolver = p.resolver_doh
+p.resolver_doh = lambda h: (chamou.append(h), '93.184.216.34')[1]  # finge o DoH (sem rede)
+r = p._getaddrinfo('site-que-nao-existe.invalid', 443)  # .invalid sempre falha no DNS do sistema
+assert chamou == ['site-que-nao-existe.invalid'] and r, 'cai no DNS da internet quando o do sistema falha'
+del chamou[:]
+p._getaddrinfo('127.0.0.1', 80)  # host que resolve: nao usa o DoH
+assert chamou == [], 'DNS do sistema tem prioridade'
+p.resolver_doh = _orig_resolver
+print('TESTE DNS OK')

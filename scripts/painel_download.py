@@ -8,9 +8,10 @@
 - atualizar: so baixa de novo o que mudou (ETag/Last-Modified); continua download cortado; repete o que falhou por erro de rede
 - no fim cria, na pasta escolhida: 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat' (servidor local)
 - perfis + agendamento: python painel_download.py --perfil nome [--perfil outro] [--atualizar] roda sem janela
+- se o DNS do PC estiver quebrado, resolve o endereco pela internet (DoH 1.1.1.1/8.8.8.8), como o navegador
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
-import fnmatch, functools, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
+import fnmatch, functools, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, socket, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
@@ -79,6 +80,50 @@ QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
 NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
+
+# DNS pela internet (DoH): quando o DNS do PC esta quebrado, resolve o nome como o navegador faz.
+# Os servidores sao IPs fixos, entao nao precisam do DNS do sistema para serem alcancados.
+DOH = ('https://1.1.1.1/dns-query', 'https://8.8.8.8/resolve', 'https://9.9.9.9:5053/dns-query')
+_dns, _dns_lock, _getaddrinfo_orig, log_dns = {}, threading.Lock(), socket.getaddrinfo, [None]  # log_dns[0]: aviso no registro
+
+
+def resolver_doh(host):
+    """IP do host por varios provedores (o que responder primeiro); None se nenhum resolver"""
+    for url in DOH:
+        try:
+            req = urllib.request.Request(f'{url}?name={urllib.parse.quote(host)}&type=A', headers={'accept': 'application/dns-json'})
+            dados = json.load(_getaddrinfo_opener.open(req, timeout=8))
+            ips = [a['data'] for a in dados.get('Answer', ()) if a.get('type') == 1]  # type 1 = A (IPv4)
+            if ips:
+                return ips[0]
+        except Exception:
+            continue
+    return None
+
+
+_getaddrinfo_opener = urllib.request.build_opener()  # sem cookies: so para as consultas de DNS
+
+
+def _getaddrinfo(host, *a, **k):
+    """usa o DNS do PC; se ele falhar (DNS quebrado), descobre o IP pela internet"""
+    try:
+        return _getaddrinfo_orig(host, *a, **k)
+    except socket.gaierror:
+        with _dns_lock:
+            ip = _dns.get(host)
+        novo = ip is None
+        if novo:
+            ip = resolver_doh(host) if isinstance(host, str) else None
+            with _dns_lock:
+                _dns[host] = ip or ''
+        if not ip:
+            raise
+        if novo and log_dns[0]:
+            log_dns[0](f'aviso: DNS do PC falhou para {host}; resolvi pela internet ({ip})')
+        return _getaddrinfo_orig(ip, *a, **k)  # conecta no IP; o nome continua indo no SNI/certificado
+
+
+socket.getaddrinfo = _getaddrinfo  # http.client/urllib passam a contornar o DNS quebrado sozinhos
 # regra do navegador: scripts da pagina nao acessam a internet (so arquivos locais); formularios nao enviam nada
 TRAVA = ('''<meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob: 'unsafe-inline' 'unsafe-eval'; '''
          '''form-action 'none'">''')
@@ -320,6 +365,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
              sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True):
     os.makedirs(raiz, exist_ok=True)
+    log_dns[0] = log
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
     os.makedirs(painel, exist_ok=True)
     try:
@@ -633,6 +679,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 for f in fs:
                     z.write(os.path.join(d, f), os.path.relpath(os.path.join(d, f), raiz))
     log(f'PRONTO: {baixados[0]} arquivos em {raiz}' + (' + .zip' if gerar_zip else '') + (' (parado)' if parar.is_set() else ''))
+    log_dns[0] = None  # nao usar este log depois que o espelhar acabou
 
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
