@@ -4,14 +4,29 @@
   e uma trava (CSP) impede a pagina de acessar a internet; opcional: .zip no fim
 - filtros no estilo HTTrack, um por linha: +*.pdf (inclui, mesmo de outro site)  -*.gif (exclui)
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
-- retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora dominios de anuncio
+- retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora anuncios e redes sociais
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
 import fnmatch, hashlib, html as htmllib, http.cookiejar, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext
 
-ANUNCIOS = ('doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com')
+BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); vale para o site e todos os subdominios
+    # anuncios e rastreadores
+    'doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com', 'googleadservices.com',
+    'adservice.google.com', 'amazon-adsystem.com', 'adnxs.com', 'criteo.com', 'taboola.com', 'outbrain.com', 'hotjar.com',
+    'scorecardresearch.com', 'facebook.net', 'addthis.com', 'sharethis.com', 'clarity.ms', 'bat.bing.com', 'mc.yandex.ru',
+    'mixpanel.com', 'segment.com', 'segment.io', 'newrelic.com', 'nr-data.net', 'optimizely.com', 'quantserve.com', 'adsrvr.org',
+    'rubiconproject.com', 'pubmatic.com', 'openx.net', 'casalemedia.com', 'moatads.com', 'ads-twitter.com', 'hs-analytics.net',
+    # avisos de cookie, chats e comentarios
+    'onetrust.com', 'cookielaw.org', 'cookiebot.com', 'usercentrics.eu', 'intercom.io', 'tawk.to', 'crisp.chat', 'onesignal.com',
+    'disqus.com', 'disquscdn.com',
+    # redes sociais
+    'facebook.com', 'fb.com', 'fb.me', 'fbcdn.net', 'instagram.com', 'cdninstagram.com', 'twitter.com', 'x.com', 't.co', 'twimg.com',
+    'tiktok.com', 'tiktokcdn.com', 'linkedin.com', 'licdn.com', 'pinterest.com', 'pinimg.com', 'reddit.com', 'redd.it', 'redditmedia.com',
+    'youtube.com', 'youtu.be', 'ytimg.com', 'googlevideo.com', 'whatsapp.com', 'wa.me', 'telegram.org', 't.me', 'discord.com', 'discord.gg',
+    'snapchat.com', 'threads.net', 'tumblr.com', 'vk.com', 'kwai.com', 'twitch.tv', 'bsky.app', 'mastodon.social', 'quora.com',
+}
 ATTR = re.compile(r'''\b(?:href|src|xlink:href|poster|background|data|manifest|lowsrc|longdesc|data-[\w-]*(?:src|href|url|file|original|bg|background|download|lazy))\s*=\s*["']([^"'#]+)'''
                   r'''|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)|\bcontent\s*=\s*["']\d+\s*;\s*url\s*=\s*([^"'#]+)|sourceMappingURL=([^\s"'*]+)''', re.I)
 BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
@@ -44,6 +59,7 @@ GRUPOS = {
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
     'Outros conhecidos': ('torrent', 'crt', 'cer', 'pem', 'gpg', 'sig', 'sha256', 'md5', 'iss', 'nsi'),
 }
+LISTA_BLOQUEIO, LISTA_FORMATOS = (os.path.join(os.path.dirname(os.path.abspath(__file__)), n) for n in ('sites_bloqueados.txt', 'formatos_bloqueados.txt'))
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
 DINAMICAS = {'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'shtml', 'phtml', 'erb', 'cshtml'}  # pagina gerada no servidor: salva como .html para abrir offline
 LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 'txt', 'm3u8', 'm3u', 'webmanifest', 'rss', 'atom', 'jsonld',
@@ -188,9 +204,10 @@ def gerar_indice(raiz, inicio, origem):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS):
     os.makedirs(raiz, exist_ok=True)
     cookies = cookies or {}
+    bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
 
     def cab(u, extra=None):
@@ -216,7 +233,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         e = extensao(u)
         if e in ext_excluidas or (e not in CONHECIDAS and not outros):
             return False
-        if any(a in u for a in ANUNCIOS) or any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
+        h = urllib.parse.urlparse(u).netloc.lower().split(':')[0]
+        if urllib.parse.urlparse(u).netloc not in dominios and any(h == d or h.endswith('.' + d) for d in bloquear):
+            return False
+        if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
             return False
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
             return True
@@ -327,7 +347,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         novos = []
         for v in links(texto, u, extras):
             eh_pagina = extensao(v) in GRUPOS['Paginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
-            if eh_pagina and html and prof >= profundidade:
+            if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
             novos.append((v, prof + 1 if eh_pagina else prof))
         return novos
@@ -409,6 +429,18 @@ def main():
     tk.Label(w, text='Cookies para areas que pedem login (so sites seus; um por linha: site.com: cookie):').pack(anchor='w', padx=8)
     cookies_caixa = scrolledtext.ScrolledText(w, width=96, height=2)
     cookies_caixa.pack(padx=8)
+    def caixa_salva(texto, arquivo):
+        """caixa de texto que lembra o conteudo entre usos (salva no arquivo ao clicar Baixar)"""
+        tk.Label(w, text=texto).pack(anchor='w', padx=8)
+        c = scrolledtext.ScrolledText(w, width=96, height=2)
+        c.pack(padx=8)
+        try:
+            c.insert('1.0', open(arquivo, encoding='utf-8').read())
+        except OSError:  # primeira vez: vazia
+            pass
+        return c
+    bloq_caixa = caixa_salva('Outros sites que nao quero que ele visite (um por linha; vale para os subdominios):', LISTA_BLOQUEIO)
+    form_caixa = caixa_salva('Formatos que nao quero que ele baixe (ex.: exe, iso, mp4 -- um por linha ou separados por virgula):', LISTA_FORMATOS)
     campos = {}
     linha = tk.Frame(w)
     linha.pack(anchor='w', padx=8, pady=4)
@@ -427,11 +459,11 @@ def main():
         rotulo = nome if nome == 'Outros' else f'{nome} (.{GRUPOS[nome][0] or GRUPOS[nome][1]}...)'
         tk.Checkbutton(grade, text=rotulo, variable=tipos[nome]).grid(row=i // 4, column=i % 4, sticky='w')
     opcoes = tk.Frame(w)
-    opcoes.pack(anchor='w', padx=8)
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
-    for k, t in (('mesmo', 'So o mesmo site (desmarque p/ seguir links de outros sites)'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
-                 ('sitemap', 'Ler sitemap.xml'), ('form', 'Botoes de download (so site proprio)')):
-        tk.Checkbutton(opcoes, text=t, variable=var[k]).pack(side='left')
+    opcoes.pack(anchor='w', padx=8, pady=(4, 0))
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
+    for i, (k, t) in enumerate((('mesmo', 'So o mesmo site (desmarque p/ seguir links de outros sites)'), ('lixo', 'Bloquear anuncios e redes sociais'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
+                 ('sitemap', 'Ler sitemap.xml'), ('form', 'Botoes de download (so site proprio)'))):
+        tk.Checkbutton(opcoes, text=t, variable=var[k]).grid(row=i // 3, column=i % 3, sticky='w')
     var['form'].set(False)
     parar = threading.Event()
     registro = scrolledtext.ScrolledText(w, width=96, height=14, state='disabled')
@@ -448,12 +480,17 @@ def main():
             log('cole um endereco http e escolha uma pasta')
             return
         parar.clear()
+        bloq, sem_formato = (c.get('1.0', 'end').strip() for c in (bloq_caixa, form_caixa))
+        for arquivo, conteudo in ((LISTA_BLOQUEIO, bloq), (LISTA_FORMATOS, sem_formato)):
+            open(arquivo, 'w', encoding='utf-8').write(conteudo + '\n')
         threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
             profundidade=int(campos['prof'].get()), limite=int(campos['lim'].get()), mesmo_site=var['mesmo'].get(),
             filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
             pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(), formularios=var['form'].get(),
-            ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}, outros=tipos['Outros'].get(),
+            ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}
+            | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')}, outros=tipos['Outros'].get(),
             extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x],
+            bloquear=(BLOQUEADOS if var['lixo'].get() else set()) | {L.split('#')[0] for L in bloq.splitlines()},
             cookies={L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
                      L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()})).start()
 
