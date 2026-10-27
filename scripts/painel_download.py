@@ -88,6 +88,7 @@ NAO_BAIXADO = ('''<!doctype html><meta charset="utf-8"><title>Nao baixado</title
                '''<a id="ir" target="_blank" rel="noopener noreferrer">Abrir na internet &#8599;</a></p><script>'''
                '''const u = decodeURIComponent(location.hash.slice(1)); document.getElementById('u').textContent = u;'''
                '''if (/^https?:/.test(u)) document.getElementById('ir').href = u; else document.getElementById('ir').remove()</script>''')
+PRECONEXAO = re.compile(r'''<link\b[^>]*\brel\s*=\s*["']?(?:preconnect|dns-prefetch)\b[^>]*>''', re.I)
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
 
 
@@ -159,6 +160,7 @@ def base_de(texto, u):
 def links(texto, base, extras=()):
     base = base_de(texto, base)
     texto = re.sub(r'<base\b[^>]*>', '', texto, flags=re.I)  # o <base> nao e link para baixar
+    texto = PRECONEXAO.sub('', texto)  # <link rel=preconnect href=https://fonts.gstatic.com>: dica de conexao, nao arquivo
     texto = re.sub(r'\\u002[fF]', '/', texto.replace('\\/', '/'))  # JSON escapa a barra: "https:\/\/site\/x.lua"
     achados = [next(x for x in m if x) for m in ATTR.findall(texto)]
     achados += [a for a in QUOTADO.findall(texto) if ',' not in a and ('/' in a or extensao(a.split('#')[0]) not in DUVIDOSAS)]  # ".lua,.txt" e filtro, nao arquivo
@@ -177,6 +179,8 @@ def links(texto, base, extras=()):
             continue
         if re.match(r'\s*[\w.-]+\(', a):  # funcao de CSS/JS ("radial-gradient(...)", "t.getAttribute(") e nao arquivo
             continue
+        if a.strip().lower() in ('false', 'true', 'null', 'undefined', 'none') or a.startswith('@') or re.fullmatch(r'[A-Za-z0-9+/]{40,}={0,2}', a.strip()):
+            continue  # valor de atributo ("false"), sufixo ("@2x.png") ou imagem embutida em base64
         u = urllib.parse.urljoin(base, htmllib.unescape(a.strip())).split('#')[0]  # &amp; do html vira &
         if u.startswith('http'):
             out.append(normal(u))
@@ -332,23 +336,24 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     rp, lock, ultimo = {}, threading.Lock(), {}  # ultimo pedido de cada site: a pausa vale por site
     feitos, mapa, baixados = set(urls), {}, [0]
 
-    def permitido(u):
+    def porque(u):
+        """'' se pode baixar; senao o motivo (aparece no esqueleto, em 'Nao copiados')"""
         e = extensao(u)
         if e in ext_excluidas or (e not in CONHECIDAS and not outros):
-            return False
+            return f'tipo .{e} desmarcado' if e else 'tipo desmarcado'
         h = urllib.parse.urlparse(u).netloc.lower().split(':')[0]
         if urllib.parse.urlparse(u).netloc not in dominios and any(h == d or h.endswith('.' + d) or (d.endswith('.*') and h.startswith(d[:-1])) for d in bloquear):
-            return False
+            return 'site bloqueado (anúncio, rede social ou sua lista)'
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
-            return False
+            return 'filtro -'
         p = urllib.parse.urlparse(u)
         if e in GRUPOS['Páginas'] and PERIGOSOS.search(p.path + '?' + p.query):  # nunca clica em sair/excluir (derruba o login ou apaga algo)
-            return False
+            return 'link de sair/excluir (nunca abre)'
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
-            return True
+            return ''
         if mesmo_site and p.netloc not in dominios and not (
                 recursos_fora and ((e in CONHECIDAS and e not in GRUPOS['Páginas']) or re.search(r'/css2?$', p.path))):  # shortcut: /css e /css2 = Google Fonts sem extensao
-            return False  # pagina de outro site; arquivos que a pagina usa (CDN, fontes, icones) vem sempre
+            return 'página de outro site ("Só o mesmo site" marcado)'  # arquivos que a pagina usa (CDN, fontes, icones) vem sempre
         if robots and (e in GRUPOS['Páginas'] or p.netloc in dominios):  # arquivo da pagina vindo de CDN: o navegador tambem nao consulta robots
             h = urllib.parse.urlparse(u)
             with lock:
@@ -361,8 +366,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     rp[h.netloc] = r
             r = rp[h.netloc]
             if r and not r.can_fetch('leitura-pessoal', u):
-                return False
-        return True
+                return 'proibido pelo robots.txt do site'
+        return ''
+
+    def permitido(u):
+        return not porque(u)
 
     def nome_real(u, dest, r):
         """nome pelo servidor: download.php?id=3 que manda um .zip vira arquivo.zip, nao .html"""
@@ -581,7 +589,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     d[0:1] = [local(d[0])] if d else []
                     partes.append(' '.join(d))
                 return m.group(0).replace(m.group(1), ', '.join(partes))
-            novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, texto)), flags=re.I)  # links ja viraram caminhos locais
+            novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, PRECONEXAO.sub('', texto))), flags=re.I)  # links ja viraram caminhos locais
             if not dest.lower().endswith('.css'):
                 novo = re.sub(r'''\s(?:integrity|nonce)\s*=\s*("[^"]*"|'[^']*')''', '', novo, flags=re.I)  # o arquivo local mudou: a assinatura original bloquearia ele
                 novo, n = re.subn(r'<head\b[^>]*>', lambda h: h.group(0) + TRAVA, novo, count=1, flags=re.I)
@@ -595,7 +603,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     motivos = {}
     for u in set(falhas) | set(nao_copiados):
         motivos[u] = (f'erro {falhas[u]}' if isinstance(falhas[u], int) else 'erro de rede') if u in falhas else \
-            'fora do limite (profundidade ou Arquivos máx.)' if permitido(u) else 'bloqueado (outro site, tipo, filtro, lista ou robots.txt)'
+            porque(u) or 'fora do limite (profundidade ou Arquivos máx.)'
     gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()}, motivos)
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:

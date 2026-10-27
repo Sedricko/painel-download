@@ -12,7 +12,7 @@ import painel_download as p
 PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a><a href="/loja.php?a=1&amp;b=2">loja</a>
 <div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a><a href="https://fora.example/pagina">fora</a>
 <script src="/sub/app.js" integrity="sha384-x"></script>
-<link rel="stylesheet" href="http://localhost:PORTA/cdn/css2?family=X"><a href="http://localhost:PORTA/fora.html">pagina de outro site</a><a href="/index.html">inicio de novo</a><a href="/privado/x.html">privado</a><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png"><script src="https://analytics.contador.example/script.js"></script>
+<link rel="stylesheet" href="http://localhost:PORTA/cdn/css2?family=X"><link rel="preconnect" href="https://fonts.gstatic.com"><a href="http://localhost:PORTA/fora.html">pagina de outro site</a><a href="/index.html">inicio de novo</a><a href="/privado/x.html">privado</a><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png"><script src="https://analytics.contador.example/script.js"></script>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -103,7 +103,8 @@ assert os.path.exists(os.path.join(cdn, 'fonte.woff2')) and [f for f in os.listd
 assert '.css' in open(os.path.join(site, 'index.html'), encoding='utf-8').read().split('localhost_')[1][:60], 'pagina aponta para o .css local'
 assert not os.path.exists(os.path.join(site, 'privado')), 'robots.txt respeitado (lido com o nome do painel)'
 assert 'fora.example/pagina' in mapa and 'target="_blank"' in mapa and 'data-g="Não copiados"' in mapa, 'esqueleto lista o que nao foi copiado com link direto'
-assert 'privado/x.html' in mapa and 'robots.txt' in mapa, 'motivo do bloqueio'
+assert 'privado/x.html' in mapa and 'proibido pelo robots.txt' in mapa and 'página de outro site' in mapa, 'motivo exato do bloqueio'
+assert 'fonts.gstatic.com' not in mapa, 'preconnect nao e link'
 print('TESTE OK')
 
 # --- download: nome real, tipo, logout, continuar .part, repetir falhas, atualizar ---
@@ -200,6 +201,6 @@ print('TESTE AUTOMACAO OK')
 # --- codigo que parece endereco mas nao e (achados em sites reais) ---
 js = '''const e=new URL(this.config.iconUrl,window.location); a={api:"https://vimeo.com/api/oembed.json?url={0}"};
 el.style.background = "radial-gradient(circle, rgba(3,167,211,0.8) 0%, transparent 70%)"; c="title.class";
-css="body{background:url(img/bg.png)}"; h='<a href="docs/foto (1).png">x</a>'; f=".lua,.txt"; g=Ra("googletag.cmd") '''
+css="body{background:url(img/bg.png)}"; h='<a href="docs/foto (1).png">x</a>'; f=".lua,.txt"; g=Ra("googletag.cmd"); i='<img data-src="false"><img src="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">'; r="@2x.png" '''
 assert sorted(set(p.links(js, 'https://s.com/'))) == ['https://s.com/docs/foto (1).png', 'https://s.com/img/bg.png'], p.links(js, 'https://s.com/')
 print('TESTE FALSOS ENDERECOS OK')
