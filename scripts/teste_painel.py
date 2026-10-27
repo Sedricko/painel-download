@@ -102,6 +102,7 @@ cdn = os.path.join(raiz, f'localhost_{porta}', 'cdn')
 assert os.path.exists(os.path.join(cdn, 'fonte.woff2')) and [f for f in os.listdir(cdn) if f.endswith('.css')], 'arquivos da pagina vindos de outro site (CDN)'
 assert '.css' in open(os.path.join(site, 'index.html'), encoding='utf-8').read().split('localhost_')[1][:60], 'pagina aponta para o .css local'
 assert not os.path.exists(os.path.join(site, 'privado')), 'robots.txt respeitado (lido com o nome do painel)'
+assert os.path.exists(os.path.join(site, 'robots.txt')) and os.path.exists(os.path.join(site, 'sitemap.xml')), 'robots.txt e sitemap.xml salvos na copia'
 assert 'fora.example/pagina' in mapa and 'target="_blank"' in mapa and 'data-g="Não copiados"' in mapa, 'esqueleto lista o que nao foi copiado com link direto'
 assert 'privado/x.html' in mapa and 'proibido pelo robots.txt' in mapa and 'página de outro site' in mapa, 'motivo exato do bloqueio'
 assert 'fonts.gstatic.com' not in mapa, 'preconnect nao e link'
@@ -118,6 +119,8 @@ class H2(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         pedidos.append((self.path, self.headers.get('If-None-Match'), self.headers.get('Range')))
+        if self.path in ('/robots.txt', '/sitemap.xml'):  # este site nao tem: 404 (deve ser silencioso)
+            self.send_response(404); self.end_headers(); return
         if self.path == '/':
             etag = f'"v{versao[0]}"'
             if self.headers.get('If-None-Match') == etag:
@@ -164,7 +167,7 @@ assert open(os.path.join(raiz2, '.painel', 'falhas.txt')).read() == '', 'sem fal
 # rodar de novo (sem atualizar): nada novo e nenhum pedido de lixo vindo das paginas ja reescritas
 del pedidos[:]; del log2[:]
 rodar()
-assert [x[0] for x in pedidos] == [], pedidos
+assert [x[0] for x in pedidos if x[0] not in ('/robots.txt', '/sitemap.xml')] == [], pedidos  # meta sem 404-cache: re-pedido ok
 # atualizar: pagina nao mudou -> 304; depois muda -> baixa de novo e acha o arquivo novo
 rodar(atualizar=True)
 assert ('/', '"v1"', None) in pedidos and not os.path.exists(os.path.join(site2, 'novo2.txt')), 'atualizar usa ETag'

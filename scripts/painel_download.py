@@ -541,6 +541,12 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         return novos
 
     nivel = [(u, 0) for u in urls]
+    for base in {f'{urllib.parse.urlparse(u).scheme}://{urllib.parse.urlparse(u).netloc}' for u in urls}:
+        for meta in ('/robots.txt', '/sitemap.xml'):  # guarda os arquivos do proprio site (nao passam pelo robots)
+            if base + meta not in feitos:
+                feitos.add(base + meta)
+                palpites.add(base + meta)  # robots/sitemap que nao existem: 404 silencioso, sem virar falha
+                nivel.append((base + meta, 0))
     if sitemap:  # sitemap.xml lista paginas publicas que nenhum link mostra
         for v in ler_sitemaps({f'{urllib.parse.urlparse(u).scheme}://{urllib.parse.urlparse(u).netloc}' for u in urls}, log):
             if v not in feitos and permitido(v):
