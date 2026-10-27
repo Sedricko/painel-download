@@ -76,10 +76,11 @@ LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 
 SEM_PONTO = {'Dockerfile', 'Makefile', 'Procfile', 'Jenkinsfile'}  # arquivos conhecidos sem extensao
 DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app', 'key', 'sys', 'lib', 'env', 'dat', 'img', 'bin',
                                                      'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock', 'class', 'cmd'}
+MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.-]+\.(?:css|js)$')  # nome de modulo do MediaWiki (sem barra), nao um arquivo
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 48  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 49  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -236,7 +237,12 @@ def links(texto, base, extras=()):
     texto = PRECONEXAO.sub('', texto)  # <link rel=preconnect href=https://fonts.gstatic.com>: dica de conexao, nao arquivo
     texto = re.sub(r'\\u002[fF]', '/', texto.replace('\\/', '/'))  # JSON escapa a barra: "https:\/\/site\/x.lua"
     achados = [next(x for x in m if x) for m in ATTR.findall(texto)]
-    achados += [a for a in QUOTADO.findall(texto) if ',' not in a and ('/' in a or extensao(a.split('#')[0]) not in DUVIDOSAS)]  # ".lua,.txt" e filtro, nao arquivo
+    for a in QUOTADO.findall(texto):  # "dir/arquivo.lua" escondido em qualquer texto
+        nome = a.split('#')[0]
+        if ',' in a or MODULO.match(nome):  # ".lua,.txt" e filtro; "ext.fandom.X.css" e nome de modulo do MediaWiki, nao arquivo
+            continue
+        if '/' in a or extensao(nome) not in DUVIDOSAS:
+            achados.append(a)
     if extensao(base) in ('m3u8', 'm3u'):  # playlist: cada linha sem '#' e um pedaco do video
         achados += [L.strip() for L in texto.splitlines() if L.strip() and not L.startswith('#')]
     if extras:  # extensions the user asked for: also look for them inside scripts ("dir/file.lua", 'https://x/y.lua')

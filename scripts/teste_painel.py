@@ -206,6 +206,7 @@ js = '''const e=new URL(this.config.iconUrl,window.location); a={api:"https://vi
 el.style.background = "radial-gradient(circle, rgba(3,167,211,0.8) 0%, transparent 70%)"; c="title.class";
 css="body{background:url(img/bg.png)}"; h='<a href="docs/foto (1).png">x</a>'; f=".lua,.txt"; g=Ra("googletag.cmd"); i='<img data-src="false"><img src="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">'; r="@2x.png" '''
 assert sorted(set(p.links(js, 'https://s.com/'))) == ['https://s.com/docs/foto (1).png', 'https://s.com/img/bg.png'], p.links(js, 'https://s.com/')
+assert p.links('a="ext.fandom.X.css"; b="skin.fandomdesktop.rail.css"; c="vendor.tippy.css"; ok="libs/real.css"', 'https://s.com/') == ['https://s.com/libs/real.css'], 'nomes de modulo do MediaWiki nao viram arquivo'
 print('TESTE FALSOS ENDERECOS OK')
 
 # --- servicos de arquivo viram link direto; formulario escondido que nao e download nao e apertado ---
