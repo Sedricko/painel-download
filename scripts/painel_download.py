@@ -82,7 +82,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 58  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 59  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -881,7 +881,7 @@ def main():
     COR = {'fundo': '#f4f6fa', 'cartao': '#ffffff', 'borda': '#dfe3ea', 'texto': '#1f2937', 'suave': '#6b7280',
            'destaque': '#2563eb', 'destaque2': '#1d4ed8', 'topo': '#111827', 'log': '#0f172a'}
     w = tk.Tk()
-    w.title('Painel de Download')
+    w.title(f'Painel de Download v{VERSAO_PAINEL}')
     w.configure(bg=COR['fundo'])
     w.minsize(860, 640)
     fonte = ('Segoe UI', 10)
@@ -916,7 +916,7 @@ def main():
     topo = tk.Frame(w, bg=COR['topo'], padx=20, pady=12)
     topo.pack(fill='x')
     tk.Label(topo, text='Painel de Download', bg=COR['topo'], fg='white', font=('Segoe UI', 15, 'bold')).pack(anchor='w')
-    tk.Label(topo, text='Copia sites e arquivos para abrir 100% offline', bg=COR['topo'], fg='#9ca3af', font=fonte).pack(anchor='w')
+    tk.Label(topo, text=f'Copia sites e arquivos para abrir 100% offline  ·  v{VERSAO_PAINEL}', bg=COR['topo'], fg='#9ca3af', font=fonte).pack(anchor='w')
     corpo = ttk.Frame(w, padding=(16, 12, 16, 0))
     corpo.pack(fill='both', expand=True)
 
