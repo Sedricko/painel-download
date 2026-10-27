@@ -571,3 +571,32 @@ assert cookies11.get('localhost') and not [c for c in cookies11['localhost'] if 
 print('TESTE RESTRICOES OCULTAS OK: robots.txt, login, sair/apagar, form com senha e cookie respeitados')
 assert '/nofollow-alvo.html' not in caminhos, 'meta robots nofollow ignorado'
 print('TESTE NOFOLLOW OK')
+
+# --- auditoria de exposicao (site do usuario): mede o acessivel, nao quebra nada ---
+class H12(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        pth = self.path
+        if pth == '/robots.txt':
+            self.send_response(200); self.end_headers(); self.wfile.write(b'User-agent: *\nDisallow: /oculto/\n'); return
+        if pth == '/area-vip':  # protegida de verdade
+            self.send_response(401); self.end_headers(); return
+        corpo = {'/': b'<html><a href="/oculto/vazou.html">o</a><a href="/aberto.html">a</a><a href="/area-vip">v</a></html>',
+                 '/oculto/vazou.html': b'<html>deveria estar escondido, mas abriu</html>',
+                 '/aberto.html': b'<html>ok</html>'}.get(pth)
+        self.send_response(200 if corpo is not None else 404); self.end_headers(); self.wfile.write(corpo or b'')
+
+
+srv12 = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H12)
+porta12 = srv12.server_address[1]
+threading.Thread(target=srv12.serve_forever, daemon=True).start()
+raiz12 = os.path.join(tempfile.mkdtemp(), 'espelho')
+# robots DESLIGADO (site proprio) para a auditoria enxergar o que o robots tentava esconder
+p.espelhar([f'http://127.0.0.1:{porta12}/'], raiz12, print, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False, auditoria=True)
+aud = open(os.path.join(raiz12, 'auditoria.html'), encoding='utf-8').read()
+assert '/oculto/vazou.html' in aud and 'Exposto apesar do robots.txt (1)' in aud, 'nao flagrou o exposto no robots'
+assert '/aberto.html' in aud, 'nao listou o publico'
+assert '/area-vip' in aud.split('Protegido')[1], 'nao listou o protegido 401'
+print('TESTE AUDITORIA OK')

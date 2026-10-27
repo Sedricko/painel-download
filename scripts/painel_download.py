@@ -85,7 +85,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 66  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 67  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -444,6 +444,38 @@ BAT_COMPLETO = (  # servidor local (sem internet): com ele funcionam sites React
     'w.open(\'http://127.0.0.1:%%d/index.html\' %% s.server_address[1]); s.serve_forever()"\r\n')
 
 
+def gerar_auditoria(raiz, publicos, protegidos, dominios, cab, log):
+    """auditoria.html do site DO USUARIO: o que ficou publico sem login, o que o robots.txt tentava esconder mas
+    respondeu, e o que esta protegido (401/403). So mede o ja acessivel; nao quebra nada."""
+    robo = {}
+    for d in dominios:  # le o robots.txt de cada dominio para marcar o que ele tentava esconder
+        rp = None
+        for esquema in ('https', 'http'):
+            try:
+                end = f'{esquema}://{d}/robots.txt'
+                txt = NAVEGADOR.open(urllib.request.Request(end, headers=cab(end)), timeout=20).read().decode('utf-8', 'replace')
+                rp = urllib.robotparser.RobotFileParser(); rp.parse(txt.splitlines()); break
+            except Exception:
+                continue
+        robo[d] = rp
+    def escondido(u):
+        rp = robo.get(urllib.parse.urlparse(u).netloc)
+        return rp is not None and not rp.can_fetch('*', u)
+    expostos = sorted(u for u in publicos if escondido(u))  # publico mas o robots.txt mandava nao entrar
+    esc = htmllib.escape
+    lista = lambda us, cls='': ''.join(f'<li class="{cls}"><a href="{esc(u)}" target="_blank" rel="noopener noreferrer">{esc(u)}</a></li>' for u in us) or '<li><small>nenhum</small></li>'
+    html = (f'<!doctype html><meta charset="utf-8"><title>Auditoria de exposicao</title><style>{ESQUELETO_CSS}'
+            '.alerta{color:#b91c1c;font-weight:600}li.exp{background:#fef2f2}</style>'
+            '<header><h1>Auditoria de exposicao</h1><p>So o que ja estava acessivel. Rode no site que voce controla.</p></header><main>'
+            f'<div class="arvore"><h2 class="{"alerta" if expostos else ""}">Exposto apesar do robots.txt ({len(expostos)})</h2>'
+            f'<p><small>paginas que o robots.txt mandava esconder, mas responderam publicamente -- o classico "escondi no robots e deixei aberto"</small></p>'
+            f'<ul>{lista(expostos, "exp")}</ul>'
+            f'<h2>Publico sem login ({len(publicos)})</h2><ul>{lista(sorted(publicos))}</ul>'
+            f'<h2>Protegido (pediu login / recusou: 401/403) ({len(protegidos)})</h2><ul>{lista(sorted(protegidos))}</ul></div></main>')
+    open(os.path.join(raiz, 'auditoria.html'), 'w', encoding='utf-8').write(html)
+    log(f'AUDITORIA: {len(publicos)} publicos, {len(expostos)} expostos apesar do robots.txt (veja auditoria.html)')
+
+
 def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
     """espelho/index.html (o site em tela cheia), espelho/mapa.html (esqueleto) e, na pasta escolhida,
     os atalhos 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat'"""
@@ -506,7 +538,7 @@ def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False, renderizar=False, prof_fora=1):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False, renderizar=False, prof_fora=1, auditoria=False):
     os.makedirs(raiz, exist_ok=True)
     log_dns[0] = log
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
@@ -896,6 +928,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     for u in set(falhas) | set(nao_copiados):
         motivos[u] = (f'erro {falhas[u]}' if isinstance(falhas[u], int) else 'erro de rede') if u in falhas else \
             porque(u) or 'fora do limite (profundidade ou Arquivos máx.)'
+    if auditoria:
+        protegidos = [u for u, c in falhas.items() if isinstance(c, int) and c in (401, 403)]
+        gerar_auditoria(raiz, set(mapa), protegidos, dominios, cab, log)
     gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()}, motivos, origem_link)
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:
@@ -910,7 +945,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
-PADRAO = dict(enderecos='', pasta='', prof=3, prof_fora=1, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
+PADRAO = dict(enderecos='', pasta='', prof=3, prof_fora=1, audit=False, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
               sitemap=True, form=False, render=False, atualizar=False, separados=False, so_coladas=False, leitura=False, so_faltou=False, desmarcados=[], filtros='', extras='')
 
 
@@ -940,7 +975,7 @@ def argumentos(cfg):
         limite=int(c['lim']), prof_fora=int(c['prof_fora']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
         profundidade=0 if c['so_coladas'] else int(c['prof']), sitemap=c['sitemap'] and not c['so_coladas'],
-        formularios=c['form'], renderizar=c['render'], atualizar=c['atualizar'] or c['so_faltou'], so_faltou=c['so_faltou'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
+        formularios=c['form'], renderizar=c['render'], auditoria=c['audit'], atualizar=c['atualizar'] or c['so_faltou'], so_faltou=c['so_faltou'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
         ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
         | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
         extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
@@ -1109,9 +1144,10 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'render', 'atualizar', 'separados', 'so_coladas', 'leitura', 'so_faltou')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'render', 'audit', 'atualizar', 'separados', 'so_coladas', 'leitura', 'so_faltou')}
     var['form'].set(False)
     var['render'].set(False)
+    var['audit'].set(False)
     var['atualizar'].set(False)
     var['separados'].set(False)
     var['so_coladas'].set(False)
@@ -1167,6 +1203,8 @@ def main():
     cookies_caixa = texto(avancado, 2)
     cookies_caixa.pack(fill='x')
     ttk.Checkbutton(avancado, text='Apertar botões de download (só no seu próprio site)', variable=var['form'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(10, 0))
+    ttk.Checkbutton(avancado, text='Auditar exposição (só sites seus): gera auditoria.html com o que ficou público e o que o robots.txt escondia',
+                    variable=var['audit'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(6, 0))
     ttk.Checkbutton(avancado, text='Renderizar JavaScript (sites React/Vue; acha arquivos montados por código; precisa do Playwright, mais lento)',
                     variable=var['render'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(6, 0))
 

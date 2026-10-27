@@ -27,6 +27,9 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 - **Respeitar robots.txt**: ligado por padrao; so desligar em site do proprio usuario.
 - Campo **Cookies** (so sites seus): para areas que pedem login (free/VIP). O usuario loga no navegador, copia o cookie e cola um por linha `site.com: cookie`; o painel usa o cookie certo em cada dominio. Login nao passa de um site para outro: um cookie por site, mesmo com a mesma senha.
 
+## Auditoria (so site seu)
+Caixa **Auditar exposicao** (aba Avancado) + **Respeitar robots.txt desligado**: no fim gera `espelho/auditoria.html` com tres listas -- o que ficou publico sem login, o que o robots.txt mandava esconder mas respondeu (o classico "escondi no robots e deixei aberto") e o que esta protegido (401/403). So mede o que ja estava acessivel; nao quebra login nem adivinha endereco. Para medir area com login, rode uma vez sem cookie e outra com o seu cookie (aba Avancado): o que aparece sem cookie esta exposto.
+
 ## Limites (diga ao usuario)
 - Nao faz login. Botoes de download (form `POST` com `_token` e so campos escondidos): so com a caixa **Botoes de download (so site proprio)**, desligada por padrao, e so no mesmo site; nunca envia form com campo de texto/senha.
 - Sem a caixa **Renderizar JavaScript** (aba Avancado) nao acha nomes montados por codigo (`"dir/" + nome + ".lua"`) nem conteudo que so aparece depois de JavaScript. Com ela, cada pagina abre num navegador de verdade (Playwright: `pip install playwright`; usa o Edge/Chrome do PC) e entra o HTML final + tudo que o JavaScript pediu. Mais lento: ate 4 navegadores em paralelo (segue Conexoes).
