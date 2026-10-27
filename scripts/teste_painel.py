@@ -334,3 +334,10 @@ assert primeiros > 0, 'primeira rodada tem novos'
 del ln[:]; rodar_n()
 assert open(os.path.join(tmpn, '.painel', 'novos.txt')).read().strip() == '' and any('0 arquivos novos' in m for m in ln), 'rodar de novo sem mudanca: 0 novos'
 print('TESTE NOVOS OK')
+
+# --- motivo da falha: explica em portugues por que nao baixou ---
+assert 'nome de imagem aberto como pagina' in p.motivo_falha('https://x.fandom.com/wiki/CM45.jpg', 404), 'nome de imagem como pagina'
+assert 'editar/historico' in p.motivo_falha('https://x.fandom.com/wiki/SPELLS?action=edit', 200), 'link de editar'
+assert 'File:CM45.jpg' not in '' and '404' in p.motivo_falha('https://x.fandom.com/wiki/Category:Videos', 404), 'pagina real some: so o 404'
+assert 'rede' in p.motivo_falha('https://x/y', 'timeout'), 'erro de rede'
+print('TESTE MOTIVO FALHA OK')

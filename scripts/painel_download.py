@@ -80,7 +80,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 54  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 55  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -215,6 +215,22 @@ def extensao(url):
         if '.' in parte and parte.rsplit('.', 1)[1].lower() in CONHECIDAS:
             return parte.rsplit('.', 1)[1].lower()
     return ''
+
+
+def motivo_falha(url, codigo):
+    """explica em portugues por que um link nao baixou, para o falhas.txt"""
+    q = urllib.parse.urlparse(url).query
+    base = os.path.basename(urllib.parse.urlparse(url).path)
+    if re.search(r'action=(edit|purge|history|credits)|redlink=1', url):
+        return 'pagina de editar/historico do wiki, nao e um arquivo'
+    if '/wiki/' in url and '.' in base and ':' not in base and extensao(url) in CONHECIDAS:
+        return 'nome de imagem aberto como pagina; a imagem real foi baixada em outro endereco'
+    if not isinstance(codigo, int):
+        return 'erro de rede (sem resposta do servidor)'
+    return {403: 'bloqueado pelo servidor (403); costuma ser anuncio/rastreador',
+            401: 'exige login (401)', 429: 'pedidos demais, o servidor cortou (429)',
+            404: 'nao existe no servidor (404)', 410: 'removido do servidor (410)',
+            400: 'endereco invalido (400); costuma ser anuncio/rastreador'}.get(codigo, f'erro {codigo}')
 
 
 def caminho_local(raiz, url):
@@ -712,7 +728,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 open(dest, 'w', encoding='utf-8').write(novo)
     json.dump(estado, open(os.path.join(painel, 'estado.json'), 'w', encoding='utf-8'))
     open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(
-        ''.join(f'{u}  ({c})' + (f'  [achado em: {origem_link[u]}]' if origem_link.get(u) else '') + '\n' for u, c in falhas.items()))
+        ''.join(f'{u}  -> {motivo_falha(u, c)}' + (f'  [achado em: {origem_link[u]}]' if origem_link.get(u) else '') + '\n' for u, c in falhas.items()))
     if falhas:
         log(f'aviso: {len(falhas)} nao baixaram (lista em {os.path.join(painel, "falhas.txt")})')
     novos = [u for u in mapa if u not in tinha_antes]  # arquivos que entraram agora
