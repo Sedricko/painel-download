@@ -85,7 +85,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 65  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 66  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -734,6 +734,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             texto, pedidos_js = feito
             texto = re.sub(r'''(<meta\b[^>]*charset\s*=\s*["']?)[\w-]+''', r'\1utf-8', texto, count=1, flags=re.I)  # o navegador ja entrega em unicode
             grava_txt(dest, texto, 'utf-8')
+        nofollow = html and robots and re.search(r'''<meta\b[^>]*\bname\s*=\s*["']?robots\b[^>]*\bnofollow''', texto, re.I)
         if html:
             base = base_de(texto, u)
         achados = links(texto, u, extras) + [normal(x.split('#')[0]) for x in pedidos_js if x.startswith('http')]
@@ -753,6 +754,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     origem_link.setdefault(v, u)
             eh_pagina = extensao(v) in GRUPOS['Páginas'] and not DIRETO.match(v)  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
+                continue
+            if eh_pagina and nofollow:  # a pagina pede para nao seguir os links dela; arquivos que ela usa vem
                 continue
             if eh_pagina and urllib.parse.urlparse(v).netloc not in dominios:  # pagina de outro site: conta os saltos para fora
                 s = saltos.get(u, 0) + 1

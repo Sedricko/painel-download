@@ -518,3 +518,56 @@ assert 'f1.html' in open(os.path.join(raiz10, f'127.0.0.1_{porta10}', 'index.htm
 t = sorted(x[2] for x in vez if x[0] == '127.0.0.1' and x[1] in ('/', '/a.txt'))
 assert t[-1] - t[0] >= 0.9, 'Crawl-delay respeitado'
 print('TESTE NIVEIS FORA, CRAWL-DELAY E GZIP OK')
+
+# --- restricoes ocultas: o painel NAO pode passar por cima de nenhuma ---
+pedidos11, cookies11 = [], {}
+
+
+class H11(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        h, pth = self.headers['Host'].split(':')[0], self.path
+        pedidos11.append((h, pth))
+        cookies11.setdefault(h, set()).add(self.headers.get('Cookie') or '')
+        if h != '127.0.0.1':  # outro site: so registra se o cookie vazou
+            self.send_response(200); self.end_headers(); self.wfile.write(b'<html>fora</html>'); return
+        if pth == '/robots.txt':  # o proprio robots.txt revela os caminhos proibidos
+            corpo = b'User-agent: *\nDisallow: /segredo/\nDisallow: /admin\n'
+        elif pth == '/sitemap.xml':
+            corpo = b'<urlset><url><loc>http://127.0.0.1:%d/segredo/do-sitemap.html</loc></url></urlset>' % porta11
+        elif pth == '/vip':  # area com login: sem o cookie certo da 401
+            ok = 'login=certo' in (self.headers.get('Cookie') or '')
+            self.send_response(200 if ok else 401); self.end_headers(); self.wfile.write(b'<html>vip</html>' if ok else b''); return
+        elif pth == '/':
+            corpo = (b'<html><a href="/segredo/a.html">a</a><!-- <a href="/admin/painel.html">adm</a> -->'
+                     b'<a href="/vip">vip</a><a href="/conta/logout">sair</a><a href="/item?delete=1">apagar</a>'
+                     b'<a href="http://localhost:%d/eco.html">fora</a><a href="/nf.html">nf</a>'
+                     b'<form action="/entrar" method="POST"><input type="hidden" name="_t" value="1"><input type="password" name="s"></form></html>' % porta11)
+        elif pth == '/nf.html':  # pagina que pede para nao seguir os links dela (meta robots nofollow)
+            corpo = b'<html><head><meta name="robots" content="noindex,nofollow"></head><a href="/nofollow-alvo.html">x</a></html>'
+        else:
+            corpo = b'<html>ok</html>'
+        self.send_response(200); self.end_headers(); self.wfile.write(corpo)
+
+    def do_POST(self):
+        pedidos11.append(('POST', self.path))
+        self.send_response(200); self.end_headers()
+
+
+srv11 = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H11)
+porta11 = srv11.server_address[1]
+threading.Thread(target=srv11.serve_forever, daemon=True).start()
+raiz11 = os.path.join(tempfile.mkdtemp(), 'espelho')
+p.espelhar([f'http://127.0.0.1:{porta11}/'], raiz11, lambda m: None, threading.Event(), robots=True, formularios=True, mesmo_site=False,
+           pausa=0, gerar_zip=False, cookies={f'127.0.0.1:{porta11}': 'sessao=minha'})
+caminhos = {pth for h, pth in pedidos11 if h == '127.0.0.1'}
+assert not [c for c in caminhos if c.startswith(('/segredo', '/admin'))], ('robots.txt desrespeitado', caminhos)
+assert not os.path.exists(os.path.join(raiz11, f'127.0.0.1_{porta11}', 'vip.html')), 'area com login baixada sem login'
+assert not [c for c in caminhos if 'logout' in c or 'delete' in c], 'abriu link de sair/apagar'
+assert ('POST', '/entrar') not in pedidos11, 'enviou formulario com senha'
+assert cookies11.get('localhost') and not [c for c in cookies11['localhost'] if 'sessao=minha' in c], 'cookie de login vazou para outro site'
+print('TESTE RESTRICOES OCULTAS OK: robots.txt, login, sair/apagar, form com senha e cookie respeitados')
+assert '/nofollow-alvo.html' not in caminhos, 'meta robots nofollow ignorado'
+print('TESTE NOFOLLOW OK')
