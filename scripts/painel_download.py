@@ -285,7 +285,7 @@ def gerar_indice(raiz, inicio, origem):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True):
     os.makedirs(raiz, exist_ok=True)
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
     os.makedirs(painel, exist_ok=True)
@@ -294,7 +294,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     except (OSError, ValueError):
         estado = {}
     original = lambda dest: os.path.join(painel, 'orig', os.path.relpath(dest, raiz))
-    frescos, falhas = set(), {}
+    frescos, falhas, pai, palpites = set(), {}, {}, set()  # pai: bases das paginas que carregaram cada script
     cookies = cookies or {}
     bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
@@ -332,9 +332,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             return False
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
             return True
-        if mesmo_site and urllib.parse.urlparse(u).netloc not in dominios:
-            return False
-        if robots:
+        if mesmo_site and p.netloc not in dominios and not (
+                recursos_fora and (e not in GRUPOS['Páginas'] or re.search(r'/css2?$', p.path))):  # shortcut: /css e /css2 = Google Fonts sem extensao
+            return False  # pagina de outro site; arquivos que a pagina usa (CDN, fontes, icones) vem sempre
+        if robots and (e in GRUPOS['Páginas'] or p.netloc in dominios):  # arquivo da pagina vindo de CDN: o navegador tambem nao consulta robots
             h = urllib.parse.urlparse(u)
             with lock:
                 if h.netloc not in rp:
@@ -415,6 +416,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if e.code == 416:  # o .part ja estava completo ou mudou: recomeca
                     os.remove(part)
                     continue
+                if e.code in (404, 410) and u in palpites:
+                    return None, False
                 if tentativa == 2 or e.code in (403, 404, 410):
                     log(f'falhou {u}: {e}')
                     falhas[u] = e.code
@@ -478,7 +481,21 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if html and formularios:
             enviar_formularios(u)
         novos = []
-        for v in links(texto, u, extras):
+        if html:
+            base = base_de(texto, u)
+        achados = links(texto, u, extras)
+        if extensao(u) in ('js', 'mjs', 'cjs', 'json') and pai.get(u):
+            # no script, fetch('x') vale a partir da pagina e import 'x' a partir do proprio .js: tenta os dois;
+            # o que so uma das bases acha e palpite (404 de palpite nao conta como falha)
+            por_base = [set(achados)] + [set(links(texto, b, extras)) for b in sorted(pai[u])]
+            certos = set.intersection(*por_base)
+            with lock:
+                palpites.update(set.union(*por_base) - certos)
+            achados = list(dict.fromkeys(achados + [v for b in por_base[1:] for v in b]))
+        for v in achados:
+            if html:
+                with lock:
+                    pai.setdefault(v, set()).add(base)
             eh_pagina = extensao(v) in GRUPOS['Páginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
@@ -512,9 +529,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     if reescrever:
         fora = os.path.join(raiz, 'nao_baixado.html')
         open(fora, 'w', encoding='utf-8').write(NAO_BAIXADO)
+        reescritos = set()
         for u, dest in mapa.items():
-            if not dest.lower().endswith(('.html', '.htm', '.xhtml', '.css')):
-                continue
+            if not dest.lower().endswith(('.html', '.htm', '.xhtml', '.css')) or dest in reescritos:
+                continue  # '/' e '/index.html' sao o mesmo arquivo: reescrever de novo estragaria os caminhos ja trocados
+            reescritos.add(dest)
             if dest in frescos:  # guarda o original antes de reescrever (para atualizar depois)
                 os.makedirs(os.path.dirname(original(dest)), exist_ok=True)
                 texto = open(dest, encoding='utf-8', errors='replace').read()
@@ -567,7 +586,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
-PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, lixo=True, robots=True, rew=True, zip=True,
+PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
               sitemap=True, form=False, atualizar=False, desmarcados=[], filtros='', extras='')
 
 
@@ -586,7 +605,7 @@ def argumentos(cfg):
     return urls, os.path.join(c['pasta'], 'espelho'), dict(
         profundidade=int(c['prof']), limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
-        sitemap=c['sitemap'], formularios=c['form'], atualizar=c['atualizar'], outros='Outros formatos' not in c['desmarcados'],
+        sitemap=c['sitemap'], formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], outros='Outros formatos' not in c['desmarcados'],
         ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
         | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
         extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
@@ -732,10 +751,11 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar')}
     var['form'].set(False)
     var['atualizar'].set(False)
-    for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('rew', 'Reescrever links (abrir offline)'),
+    for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('fora', 'Arquivos da página mesmo de outro site (ícones, fontes, CDN)'),
+                                ('rew', 'Reescrever links (abrir offline)'),
                                 ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'),
                                 ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'))):
         ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)

@@ -11,7 +11,8 @@ import painel_download as p
 
 PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a><a href="/loja.php?a=1&amp;b=2">loja</a>
 <div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a><a href="https://fora.example/pagina">fora</a>
-<script src="/sub/app.js" integrity="sha384-x"></script><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png">
+<script src="/sub/app.js" integrity="sha384-x"></script>
+<link rel="stylesheet" href="http://localhost:PORTA/cdn/css2?family=X"><a href="http://localhost:PORTA/fora.html">pagina de outro site</a><a href="/index.html">inicio de novo</a><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png">
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -26,9 +27,15 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(200 if ok else 403); self.end_headers()
             self.wfile.write(b'<html>area vip</html>' if ok else b'')
             return
-        if self.path.split('?')[0] not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1', '/sub/scripts/main.lua', '/cfg/jogo.json', '/pacotes/mod.pak', '/escondido/velho.dll', '/loja.php', '/v/lista.m3u8', '/v/p0.ts', '/x/item.ini', '/js_pagina.php', '/cfg/deploy/Dockerfile', '/.htaccess'):
+        if self.headers['Host'].startswith('localhost'):  # 'outro site' (CDN)
+            if self.path == '/fora.html':
+                raise AssertionError('nao podia seguir pagina de outro site')
+            self.send_response(200); self.send_header('Content-Type', 'text/css' if 'css' in self.path else 'font/woff2'); self.end_headers()
+            self.wfile.write(b'@font-face{src:url(fonte.woff2)}' if 'css' in self.path else b'wOF2')
+            return
+        if self.path.split('?')[0] not in ('/', '/sitemap.xml', '/outra', '/escondida', '/ferramenta', '/sub/app.js', '/bin/tool.dll', '/s/x.ps1', '/sub/scripts/main.lua', '/cfg/jogo.json', '/pacotes/mod.pak', '/escondido/velho.dll', '/loja.php', '/v/lista.m3u8', '/v/p0.ts', '/x/item.ini', '/js_pagina.php', '/index.html', '/cfg/deploy/Dockerfile', '/.htaccess'):
             self.send_response(404); self.end_headers(); return
-        corpo = {'/': PAGINA, '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
+        corpo = {'/': PAGINA.replace(b'PORTA', str(porta).encode()), '/index.html': PAGINA.replace(b'PORTA', str(porta).encode()), '/ferramenta': b'<html><base href="/sub/"><script src="app.js"></script></html>',
                  '/sub/app.js': b'URL.createObjectURL(blob); a.href="%%23topo"; nextHref = "/cap/" + nome; d="http://127.0.0.1:%d/bin/tool.dll?v=1"; p=`http://127.0.0.1:%d/s/x.ps1`; require("scripts/main.lua"); go("/js_pagina.php"); console.log("x"); c={"u":"http:\\/\\/127.0.0.1:%d\\/cfg\\/jogo.json"}' % (porta, porta, porta), '/v/lista.m3u8': b'#EXTM3U\n#EXTINF:4,\np0.ts\n', '/cfg/jogo.json': b'{"item": "/x/item.ini", "d": "deploy/Dockerfile", "h": "/.htaccess"}', '/sitemap.xml': b'<urlset><url><loc>http://127.0.0.1:%d/escondida</loc></url></urlset>' % porta}.get(self.path, b'<html>ok</html>')
         self.send_response(200)
         self.send_header('Set-Cookie', 'sessao=1')
@@ -51,7 +58,7 @@ porta = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 raiz = os.path.join(tempfile.mkdtemp(), 'espelho')
 falhas = []
-p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True, cookies={f'127.0.0.1:{porta}': 'logado=sim'})
+p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True, bloquear=p.BLOQUEADOS | {'naoquero.example'}, cookies={f'127.0.0.1:{porta}': 'logado=sim'})
 site = os.path.join(raiz, f'127.0.0.1_{porta}')
 assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de download'
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
@@ -86,6 +93,9 @@ assert os.path.exists(os.path.join(site0, 'sub', 'app.js')) and not os.path.exis
 assert not [f for f in os.listdir(site0) if f.startswith('js_pagina')], 'pagina citada no js respeita a profundidade'
 assert not [d for d in os.listdir(raiz0) if 'facebook' in d or d.startswith('x.com')], 'rede social bloqueada'
 assert not [m for m in log0 if 'facebook' in m or '//x.com' in m or 'naoquero' in m], log0
+cdn = os.path.join(raiz, f'localhost_{porta}', 'cdn')
+assert os.path.exists(os.path.join(cdn, 'fonte.woff2')) and [f for f in os.listdir(cdn) if f.endswith('.css')], 'arquivos da pagina vindos de outro site (CDN)'
+assert '.css' in open(os.path.join(site, 'index.html'), encoding='utf-8').read().split('localhost_')[1][:60], 'pagina aponta para o .css local'
 print('TESTE OK')
 
 # --- download: nome real, tipo, logout, continuar .part, repetir falhas, atualizar ---
