@@ -2,9 +2,9 @@
 Rodar: python teste_painel.py"""
 import http.server, os, sys, tempfile, threading, types
 
-for m in ('tkinter', 'tkinter.filedialog', 'tkinter.scrolledtext'):  # o teste nao abre janela
+for m in ('tkinter', 'tkinter.filedialog', 'tkinter.scrolledtext', 'tkinter.ttk'):  # o teste nao abre janela
     sys.modules.setdefault(m, types.ModuleType(m))
-sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext = sys.modules['tkinter.filedialog'], sys.modules['tkinter.scrolledtext']
+sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext, sys.modules['tkinter'].ttk = sys.modules['tkinter.filedialog'], sys.modules['tkinter.scrolledtext'], sys.modules['tkinter.ttk']
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 

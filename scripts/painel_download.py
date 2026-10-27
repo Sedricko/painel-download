@@ -9,7 +9,7 @@ Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sour
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
 import fnmatch, hashlib, html as htmllib, http.cookiejar, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
-from tkinter import filedialog, scrolledtext
+from tkinter import filedialog, scrolledtext, ttk
 
 BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); vale para o site e todos os subdominios
     # anuncios e rastreadores
@@ -35,12 +35,12 @@ ABS = re.compile(r'''https?://[^\s"'<>()\\/]+/[^\s"'<>()\\]*\.[a-z0-9]{1,8}(?:\?
 
 
 GRUPOS = {
-    'Paginas': ('html', 'htm', 'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'xhtml', 'shtml', 'phtml', 'erb', 'cshtml', ''),
+    'Páginas': ('html', 'htm', 'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'xhtml', 'shtml', 'phtml', 'erb', 'cshtml', ''),
     'Estilos e scripts': ('css', 'scss', 'less', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'map', 'wasm', 'webmanifest'),
-    'Codigo': ('lua', 'luac', 'py', 'pyc', 'pyd', 'pyw', 'rb', 'pl', 'tcl', 'r', 'vbs', 'vba', 'ahk', 'au3', 'c', 'h', 'cpp', 'hpp',
+    'Código': ('lua', 'luac', 'py', 'pyc', 'pyd', 'pyw', 'rb', 'pl', 'tcl', 'r', 'vbs', 'vba', 'ahk', 'au3', 'c', 'h', 'cpp', 'hpp',
                'cs', 'java', 'kt', 'kts', 'scala', 'go', 'rs', 'swift', 'dart', 'el', 'ex', 'exs', 'erl', 'gd', 'nut', 'sqf', 'ipynb'),
     'Config': ('ini', 'cfg', 'config', 'toml', 'properties', 'inf', 'reg', 'plist', 'env', 'lst'),
-    'Automacao e DevOps': ('sh', 'bash', 'ps1', 'psm1', 'psd1', 'bat', 'cmd', 'conf', 'lock', 'htaccess', 'dockerignore', 'gitignore',
+    'Automação e DevOps': ('sh', 'bash', 'ps1', 'psm1', 'psd1', 'bat', 'cmd', 'conf', 'lock', 'htaccess', 'dockerignore', 'gitignore',
                            'dockerfile', 'makefile', 'procfile', 'jenkinsfile'),
     'Banco de dados': ('sql', 'sqlite', 'db', 'mdb', 'graphql', 'gql', 'prisma', 'mongo', 'bson'),
     'Imagens': ('jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico', 'cur', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'heif', 'jxl', 'apng',
@@ -53,8 +53,8 @@ GRUPOS = {
                   'ipa', 'deb', 'rpm', 'appimage', 'pkg', 'dmg', 'dylib', 'so', 'lib', 'bin', 'elf', 'jar', 'war', 'class', 'dex', 'run', 'iso', 'img', 'vhd', 'vmdk', 'crx', 'xpi', 'vsix', 'swf'),
     'Jogos e 3D': ('pak', 'vpk', 'wad', 'bsp', 'unity3d', 'assets', 'bundle', 'uasset', 'pk3', 'esp', 'esm', 'bsa', 'ba2', 'mod',
                    'obj', 'fbx', 'gltf', 'glb', 'usdz', 'hdr', 'exr', 'stl', 'blend', 'dae', '3ds', 'mdl', 'ct', 'cetrainer', 'sav', 'rom', 'nds', 'gba'),
-    'Audio': ('mp3', 'mp2', 'wav', 'wma', 'ogg', 'oga', 'opus', 'flac', 'aac', 'm4a', 'aiff', 'mid', 'midi', 'amr'),
-    'Video': ('mp4', 'm4v', 'mov', 'mpg', 'mpeg', 'avi', 'asf', 'wmv', 'rm', 'vob', 'qt', 'vid', 'ac3', 'mkv', 'webm', 'flv', 'ogv',
+    'Áudio': ('mp3', 'mp2', 'wav', 'wma', 'ogg', 'oga', 'opus', 'flac', 'aac', 'm4a', 'aiff', 'mid', 'midi', 'amr'),
+    'Vídeo': ('mp4', 'm4v', 'mov', 'mpg', 'mpeg', 'avi', 'asf', 'wmv', 'rm', 'vob', 'qt', 'vid', 'ac3', 'mkv', 'webm', 'flv', 'ogv',
               '3gp', 'm3u8', 'm3u', 'mpd', 'srt', 'vtt'),
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
     'Outros conhecidos': ('torrent', 'crt', 'cer', 'pem', 'gpg', 'sig', 'sha256', 'md5', 'iss', 'nsi'),
@@ -63,7 +63,7 @@ LISTA_BLOQUEIO, LISTA_FORMATOS = (os.path.join(os.path.dirname(os.path.abspath(_
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
 DINAMICAS = {'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'shtml', 'phtml', 'erb', 'cshtml'}  # pagina gerada no servidor: salva como .html para abrir offline
 LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 'txt', 'm3u8', 'm3u', 'webmanifest', 'rss', 'atom', 'jsonld',
-       'vue', 'svelte', 'md', 'markdown', 'graphql', 'gql', 'prisma', *GRUPOS['Codigo'], *GRUPOS['Config'], *GRUPOS['Automacao e DevOps']}  # arquivos de texto onde procurar links escondidos
+       'vue', 'svelte', 'md', 'markdown', 'graphql', 'gql', 'prisma', *GRUPOS['Código'], *GRUPOS['Config'], *GRUPOS['Automação e DevOps']}  # arquivos de texto onde procurar links escondidos
 # nomes que tambem sao palavras de codigo/dominio ("console.log", "site.com"): so contam com '/' no caminho
 SEM_PONTO = {'Dockerfile', 'Makefile', 'Procfile', 'Jenkinsfile'}  # arquivos conhecidos sem extensao
 DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app', 'key', 'sys', 'lib', 'env', 'dat', 'img', 'bin',
@@ -346,7 +346,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             enviar_formularios(u)
         novos = []
         for v in links(texto, u, extras):
-            eh_pagina = extensao(v) in GRUPOS['Paginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
+            eh_pagina = extensao(v) in GRUPOS['Páginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
             novos.append((v, prof + 1 if eh_pagina else prof))
@@ -415,92 +415,212 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 
 def main():
+    COR = {'fundo': '#f4f6fa', 'cartao': '#ffffff', 'borda': '#dfe3ea', 'texto': '#1f2937', 'suave': '#6b7280',
+           'destaque': '#2563eb', 'destaque2': '#1d4ed8', 'topo': '#111827', 'log': '#0f172a'}
     w = tk.Tk()
-    w.title('Espelhar paginas para o Claude')
-    tk.Label(w, text='Enderecos (um por linha):').pack(anchor='w', padx=8, pady=(8, 0))
-    caixa = scrolledtext.ScrolledText(w, width=96, height=4)
-    caixa.pack(padx=8)
-    tk.Label(w, text='Filtros (+*.pdf inclui, mesmo de outro site; -*.gif exclui):').pack(anchor='w', padx=8)
-    filtros = scrolledtext.ScrolledText(w, width=96, height=3)
-    filtros.pack(padx=8)
-    tk.Label(w, text='Extensoes extras para procurar tambem dentro dos scripts (ex.: lua, cfg, dat):').pack(anchor='w', padx=8)
-    extras_caixa = tk.Entry(w, width=60)
-    extras_caixa.pack(anchor='w', padx=8)
-    tk.Label(w, text='Cookies para areas que pedem login (so sites seus; um por linha: site.com: cookie):').pack(anchor='w', padx=8)
-    cookies_caixa = scrolledtext.ScrolledText(w, width=96, height=2)
-    cookies_caixa.pack(padx=8)
-    def caixa_salva(texto, arquivo):
+    w.title('Painel de Download')
+    w.configure(bg=COR['fundo'])
+    w.minsize(860, 640)
+    fonte = ('Segoe UI', 10)
+    st = ttk.Style(w)
+    st.theme_use('clam')
+    st.configure('.', font=fonte, background=COR['fundo'], foreground=COR['texto'])
+    st.configure('Cartao.TFrame', background=COR['cartao'])
+    st.configure('Cartao.TLabel', background=COR['cartao'])
+    st.configure('Dica.TLabel', background=COR['cartao'], foreground=COR['suave'], font=('Segoe UI', 9))
+    plano = dict(bordercolor=COR['borda'], lightcolor=COR['cartao'], darkcolor=COR['cartao'])  # tira o relevo 3D do tema
+    st.configure('Cartao.TCheckbutton', background=COR['cartao'], indicatorbackground='white', indicatorforeground='white', indicatormargin=(0, 0, 6, 0))
+    st.map('Cartao.TCheckbutton', background=[('active', COR['cartao'])], indicatorbackground=[('selected', COR['destaque']), ('active', '#e8efff')])
+    st.configure('TNotebook', background=COR['fundo'], borderwidth=0, tabmargins=(0, 0, 0, 0), **plano)
+    st.configure('TNotebook.Tab', padding=(18, 8), background=COR['fundo'], foreground=COR['suave'], borderwidth=0, **plano)
+    st.map('TNotebook.Tab', background=[('selected', COR['cartao'])], foreground=[('selected', COR['destaque'])],
+           lightcolor=[('selected', COR['cartao'])], bordercolor=[('selected', COR['borda'])])
+    st.configure('TEntry', fieldbackground='white', padding=4, **plano)
+    st.configure('TSpinbox', fieldbackground='white', padding=3, arrowsize=12, background=COR['cartao'], **plano)
+    st.map('TEntry', bordercolor=[('focus', COR['destaque'])])
+    st.map('TSpinbox', bordercolor=[('focus', COR['destaque'])])
+    st.configure('TButton', padding=(16, 7), background=COR['cartao'], **plano)
+    st.map('TButton', background=[('active', '#eef2f7')])
+    st.configure('Acao.TButton', font=('Segoe UI', 10, 'bold'), foreground='white', background=COR['destaque'], padding=(26, 8),
+                 bordercolor=COR['destaque'], lightcolor=COR['destaque'], darkcolor=COR['destaque'])
+    st.map('Acao.TButton', background=[('disabled', '#93b4f5'), ('active', COR['destaque2'])],
+           lightcolor=[('active', COR['destaque2'])], darkcolor=[('active', COR['destaque2'])], bordercolor=[('active', COR['destaque2'])])
+    st.configure('Horizontal.TProgressbar', background=COR['destaque'], troughcolor=COR['borda'], borderwidth=0,
+                 lightcolor=COR['destaque'], darkcolor=COR['destaque'], bordercolor=COR['borda'])
+
+    topo = tk.Frame(w, bg=COR['topo'], padx=20, pady=12)
+    topo.pack(fill='x')
+    tk.Label(topo, text='Painel de Download', bg=COR['topo'], fg='white', font=('Segoe UI', 15, 'bold')).pack(anchor='w')
+    tk.Label(topo, text='Copia sites e arquivos para abrir 100% offline', bg=COR['topo'], fg='#9ca3af', font=fonte).pack(anchor='w')
+    corpo = ttk.Frame(w, padding=(16, 12, 16, 0))
+    corpo.pack(fill='both', expand=True)
+
+    def texto(pai, altura):
+        return scrolledtext.ScrolledText(pai, height=altura, font=('Consolas', 10), relief='flat', bd=0, wrap='none',
+                                         highlightthickness=1, highlightbackground=COR['borda'], highlightcolor=COR['destaque'])
+
+    def rotulo(pai, titulo, dica=''):
+        ttk.Label(pai, text=titulo, style='Cartao.TLabel', font=('Segoe UI', 10, 'bold')).pack(anchor='w', pady=(8, 0))
+        if dica:
+            ttk.Label(pai, text=dica, style='Dica.TLabel').pack(anchor='w', pady=(0, 3))
+
+    # enderecos + pasta
+    cartao = ttk.Frame(corpo, style='Cartao.TFrame', padding=(14, 4, 14, 12))
+    cartao.pack(fill='x')
+    rotulo(cartao, 'Endereços', 'um por linha, começando com http:// ou https://')
+    caixa = texto(cartao, 3)
+    caixa.pack(fill='x')
+    rotulo(cartao, 'Salvar em')
+    linha_pasta = ttk.Frame(cartao, style='Cartao.TFrame')
+    linha_pasta.pack(fill='x')
+    pasta_var = tk.StringVar()
+    ttk.Entry(linha_pasta, textvariable=pasta_var).pack(side='left', fill='x', expand=True, ipady=3)
+    ttk.Button(linha_pasta, text='Escolher...', command=lambda: pasta_var.set(filedialog.askdirectory(title='Pasta onde salvar o espelho') or pasta_var.get())).pack(side='left', padx=(8, 0))
+
+    abas = ttk.Notebook(corpo)
+    abas.pack(fill='x', pady=(12, 0))
+    def aba(nome):
+        f = ttk.Frame(abas, style='Cartao.TFrame', padding=(14, 4, 14, 12))
+        abas.add(f, text=nome)
+        return f
+
+    # aba Geral: limites e opcoes
+    geral = aba('Geral')
+    rotulo(geral, 'Limites')
+    linha = ttk.Frame(geral, style='Cartao.TFrame')
+    linha.pack(anchor='w')
+    campos = {}
+    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Páginas máx.', 'lim', 200, 50), ('MB por arquivo', 'mb', 500, 50),
+                                                      ('Conexões', 'con', 4, 1), ('Pausa (s)', 'pausa', 0.3, 0.1))):
+        ttk.Label(linha, text=nome, style='Dica.TLabel').grid(row=0, column=i, sticky='w', padx=(0, 16))
+        campos[chave] = ttk.Spinbox(linha, from_=0, to=99999, increment=passo, width=9)
+        campos[chave].set(padrao)
+        campos[chave].grid(row=1, column=i, sticky='w', padx=(0, 16))
+    rotulo(geral, 'Opções')
+    opcoes = ttk.Frame(geral, style='Cartao.TFrame')
+    opcoes.pack(anchor='w')
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
+    var['form'].set(False)
+    for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('rew', 'Reescrever links (abrir offline)'),
+                                ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'))):
+        ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
+
+    # aba Tipos de arquivo
+    aba_tipos = aba('Tipos de arquivo')
+    rotulo(aba_tipos, 'Baixar estes tipos', 'todos vêm marcados; desmarque o que NÃO quer')
+    grade = ttk.Frame(aba_tipos, style='Cartao.TFrame')
+    grade.pack(anchor='w')
+    tipos = {}
+    for i, nome in enumerate(list(GRUPOS) + ['Outros formatos']):
+        tipos[nome] = tk.BooleanVar(value=True)
+        r = nome if nome == 'Outros formatos' else f'{nome} (.{GRUPOS[nome][0] or GRUPOS[nome][1]}...)'
+        ttk.Checkbutton(grade, text=r, variable=tipos[nome], style='Cartao.TCheckbutton').grid(row=i // 4, column=i % 4, sticky='w', padx=(0, 18), pady=2)
+
+    def caixa_salva(pai, titulo, dica, arquivo):
         """caixa de texto que lembra o conteudo entre usos (salva no arquivo ao clicar Baixar)"""
-        tk.Label(w, text=texto).pack(anchor='w', padx=8)
-        c = scrolledtext.ScrolledText(w, width=96, height=2)
-        c.pack(padx=8)
+        rotulo(pai, titulo, dica)
+        c = texto(pai, 2)
+        c.pack(fill='x')
         try:
             c.insert('1.0', open(arquivo, encoding='utf-8').read())
         except OSError:  # primeira vez: vazia
             pass
         return c
-    bloq_caixa = caixa_salva('Outros sites que nao quero que ele visite (um por linha; vale para os subdominios):', LISTA_BLOQUEIO)
-    form_caixa = caixa_salva('Formatos que nao quero que ele baixe (ex.: exe, iso, mp4 -- um por linha ou separados por virgula):', LISTA_FORMATOS)
-    campos = {}
-    linha = tk.Frame(w)
-    linha.pack(anchor='w', padx=8, pady=4)
-    for rotulo, chave, padrao in (('Profundidade', 'prof', 3), ('Paginas max', 'lim', 200), ('MB/arquivo', 'mb', 500),
-                                  ('Conexoes', 'con', 4), ('Pausa (s)', 'pausa', 0.3)):
-        tk.Label(linha, text=rotulo + ':').pack(side='left')
-        campos[chave] = tk.Spinbox(linha, from_=0, to=99999, increment=1, width=7)
-        campos[chave].delete(0, 'end'); campos[chave].insert(0, str(padrao))
-        campos[chave].pack(side='left', padx=(2, 10))
-    tk.Label(w, text='Tipos de arquivo (desmarque o que NAO quer):').pack(anchor='w', padx=8)
-    grade = tk.Frame(w)
-    grade.pack(anchor='w', padx=8)
-    tipos = {}
-    for i, nome in enumerate(list(GRUPOS) + ['Outros']):
-        tipos[nome] = tk.BooleanVar(value=True)
-        rotulo = nome if nome == 'Outros' else f'{nome} (.{GRUPOS[nome][0] or GRUPOS[nome][1]}...)'
-        tk.Checkbutton(grade, text=rotulo, variable=tipos[nome]).grid(row=i // 4, column=i % 4, sticky='w')
-    opcoes = tk.Frame(w)
-    opcoes.pack(anchor='w', padx=8, pady=(4, 0))
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
-    for i, (k, t) in enumerate((('mesmo', 'So o mesmo site (desmarque p/ seguir links de outros sites)'), ('lixo', 'Bloquear anuncios e redes sociais'), ('robots', 'Respeitar robots.txt'), ('rew', 'Reescrever links (abrir offline)'), ('zip', 'Gerar .zip'),
-                 ('sitemap', 'Ler sitemap.xml'), ('form', 'Botoes de download (so site proprio)'))):
-        tk.Checkbutton(opcoes, text=t, variable=var[k]).grid(row=i // 3, column=i % 3, sticky='w')
-    var['form'].set(False)
+    form_caixa = caixa_salva(aba_tipos, 'Formatos que não quero', 'ex.: exe, iso, mp4 -- um por linha ou separados por virgula', LISTA_FORMATOS)
+
+    # aba Filtros e bloqueios
+    aba_filtros = aba('Filtros e bloqueios')
+    ttk.Checkbutton(aba_filtros, text='Bloquear anúncios, rastreadores e redes sociais', variable=var['lixo'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(10, 0))
+    bloq_caixa = caixa_salva(aba_filtros, 'Outros sites que não quero que ele visite', 'um por linha; vale para os subdomínios', LISTA_BLOQUEIO)
+    rotulo(aba_filtros, 'Filtros', '+*.pdf inclui (mesmo de outro site)   -*.gif exclui   -- um por linha')
+    filtros = texto(aba_filtros, 2)
+    filtros.pack(fill='x')
+
+    # aba Avancado
+    avancado = aba('Avançado')
+    rotulo(avancado, 'Extensões extras para procurar dentro dos scripts', 'ex.: lua, cfg, dat')
+    extras_caixa = ttk.Entry(avancado)
+    extras_caixa.pack(fill='x', ipady=3)
+    rotulo(avancado, 'Cookies para áreas com login', 'só sites seus; um por linha:  site.com: cookie')
+    cookies_caixa = texto(avancado, 2)
+    cookies_caixa.pack(fill='x')
+    ttk.Checkbutton(avancado, text='Apertar botões de download (só no seu próprio site)', variable=var['form'], style='Cartao.TCheckbutton').pack(anchor='w', pady=(10, 0))
+
+    # barra de acao
+    acao = ttk.Frame(corpo, padding=(0, 12))
+    acao.pack(fill='x')
     parar = threading.Event()
-    registro = scrolledtext.ScrolledText(w, width=96, height=14, state='disabled')
+    trabalho = [None]
+    botao = ttk.Button(acao, text='Baixar', style='Acao.TButton')
+    botao.pack(side='left')
+    ttk.Button(acao, text='Parar', command=parar.set).pack(side='left', padx=8)
+    status = tk.StringVar(value='Pronto para começar')
+    ttk.Label(acao, textvariable=status, foreground=COR['suave']).pack(side='right')
+    barra = ttk.Progressbar(acao, mode='indeterminate', length=180)  # so aparece enquanto baixa
+
+    registro = scrolledtext.ScrolledText(corpo, height=12, font=('Consolas', 9), bg=COR['log'], fg='#cbd5e1', insertbackground='white',
+                                         relief='flat', bd=0, padx=10, pady=8, state='disabled')
+    registro.pack(fill='both', expand=True, pady=(0, 16))
+    for tag, cor in (('ok', '#4ade80'), ('falhou', '#f87171'), ('aviso', '#fbbf24'), ('pronto', '#60a5fa')):
+        registro.tag_configure(tag, foreground=cor)
+    registro.config(state='normal'); registro.insert('end', 'O andamento do download aparece aqui.\n', 'dica'); registro.config(state='disabled')
+    registro.tag_configure('dica', foreground='#64748b')
 
     def log(msg):
+        tag = ('falhou' if msg.startswith('falhou') else 'pronto' if msg.startswith('PRONTO') else
+               'aviso' if msg.startswith(('pulei', 'cortei', 'cole')) else 'ok' if 'ok (' in msg else '')
         def add():
-            registro.config(state='normal'); registro.insert('end', msg + '\n'); registro.see('end'); registro.config(state='disabled')
+            registro.config(state='normal'); registro.insert('end', msg + '\n', tag); registro.see('end'); registro.config(state='disabled')
+            n = re.search(r'ok \((\d+)\)', msg)
+            if n:
+                status.set(f'{n.group(1)} arquivos baixados')
+            elif tag == 'pronto':
+                status.set(f"Concluído: {re.search(r'\d+', msg).group()} arquivos" + (' (parado)' if 'parado' in msg else ''))
         w.after(0, add)
+
+    def vigiar():
+        if trabalho[0] and trabalho[0].is_alive():
+            w.after(300, vigiar)
+        else:
+            barra.stop()
+            barra.pack_forget()
+            botao.state(['!disabled'])
 
     def iniciar():
         urls = [u.strip() for u in caixa.get('1.0', 'end').splitlines() if u.strip().startswith('http')]
-        pasta = filedialog.askdirectory(title='Pasta onde salvar o espelho') if urls else None
-        if not urls or not pasta:
+        if not urls:
+            log('cole um endereco http')
+            return
+        if not pasta_var.get():
+            pasta_var.set(filedialog.askdirectory(title='Pasta onde salvar o espelho') or '')
+        pasta = pasta_var.get()
+        if not pasta:
             log('cole um endereco http e escolha uma pasta')
             return
         parar.clear()
+        registro.config(state='normal'); registro.delete('1.0', 'end'); registro.config(state='disabled')
         bloq, sem_formato = (c.get('1.0', 'end').strip() for c in (bloq_caixa, form_caixa))
         for arquivo, conteudo in ((LISTA_BLOQUEIO, bloq), (LISTA_FORMATOS, sem_formato)):
             open(arquivo, 'w', encoding='utf-8').write(conteudo + '\n')
-        threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
+        trabalho[0] = threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
             profundidade=int(campos['prof'].get()), limite=int(campos['lim'].get()), mesmo_site=var['mesmo'].get(),
             filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
             pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(), formularios=var['form'].get(),
             ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}
-            | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')}, outros=tipos['Outros'].get(),
+            | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')}, outros=tipos['Outros formatos'].get(),
             extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x],
             bloquear=(BLOQUEADOS if var['lixo'].get() else set()) | {L.split('#')[0] for L in bloq.splitlines()},
             cookies={L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
-                     L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()})).start()
+                     L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()}))
+        trabalho[0].start()
+        botao.state(['disabled'])
+        status.set('Baixando...')
+        barra.pack(side='right', padx=12)
+        barra.start(12)
+        vigiar()
 
-    botoes = tk.Frame(w)
-    botoes.pack(anchor='w', padx=8, pady=4)
-    tk.Button(botoes, text='Baixar', command=iniciar).pack(side='left')
-    tk.Button(botoes, text='Parar', command=parar.set).pack(side='left', padx=8)
-    registro.pack(padx=8, pady=8)
+    botao.config(command=iniciar)
     w.mainloop()
-
 
 if __name__ == '__main__':
     main()
