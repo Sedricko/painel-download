@@ -24,6 +24,9 @@ BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); va
     # avisos de cookie, chats e comentarios
     'onetrust.com', 'cookielaw.org', 'cookiebot.com', 'usercentrics.eu', 'intercom.io', 'tawk.to', 'crisp.chat', 'onesignal.com',
     'disqus.com', 'disquscdn.com',
+    # contadores de visita proprios (analytics.site.com etc.)
+    'rybbit.com', 'rybbit.io', 'plausible.io', 'umami.is', 'matomo.cloud', 'statcounter.com', 'cloudflareinsights.com',
+    'analytics.*', 'stats.*', 'metrics.*', 'tracking.*', 'telemetry.*',
     # redes sociais
     'facebook.com', 'fb.com', 'fb.me', 'fbcdn.net', 'instagram.com', 'cdninstagram.com', 'twitter.com', 'x.com', 't.co', 'twimg.com',
     'tiktok.com', 'tiktokcdn.com', 'linkedin.com', 'licdn.com', 'pinterest.com', 'pinimg.com', 'reddit.com', 'redd.it', 'redditmedia.com',
@@ -31,7 +34,7 @@ BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); va
     'snapchat.com', 'threads.net', 'tumblr.com', 'vk.com', 'kwai.com', 'twitch.tv', 'bsky.app', 'mastodon.social', 'quora.com',
 }
 ATTR = re.compile(r'''\b(?:href|src|xlink:href|poster|background|data|manifest|lowsrc|longdesc|data-[\w-]*(?:src|href|url|file|original|bg|background|download|lazy))\s*=\s*["']([^"'#]+)'''
-                  r'''|\burl\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)|\bcontent\s*=\s*["']\d+\s*;\s*url\s*=\s*([^"'#]+)|sourceMappingURL=([^\s"'*]+)''', re.I)
+                  r'''|(?-i:\burl)\(\s*["']?([^"')#]+)|@import\s+["']([^"']+)|\bcontent\s*=\s*["']\d+\s*;\s*url\s*=\s*([^"'#]+)|sourceMappingURL=([^\s"'*]+)''', re.I)
 BASE = re.compile(r'''<base\b[^>]*\bhref\s*=\s*["']([^"']+)''', re.I)
 SRCSET = re.compile(r'''srcset\s*=\s*["']([^"']+)''', re.I)
 ABS = re.compile(r'''https?://[^\s"'<>()\\/]+/[^\s"'<>()\\]*\.[a-z0-9]{1,8}(?:\?[^\s"'`<>()\\]*)?(?=[#"'`\s<>()\\,;]|$)''', re.I)  # endereco completo de arquivo, qualquer formato
@@ -71,7 +74,7 @@ LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 
 # nomes que tambem sao palavras de codigo/dominio ("console.log", "site.com"): so contam com '/' no caminho
 SEM_PONTO = {'Dockerfile', 'Makefile', 'Procfile', 'Jenkinsfile'}  # arquivos conhecidos sem extensao
 DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app', 'key', 'sys', 'lib', 'env', 'dat', 'img', 'bin',
-                                                     'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock'}
+                                                     'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock', 'class', 'cmd'}
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
@@ -81,8 +84,10 @@ TRAVA = ('''<meta http-equiv="Content-Security-Policy" content="default-src 'sel
          '''form-action 'none'">''')
 NAO_BAIXADO = ('''<!doctype html><meta charset="utf-8"><title>Nao baixado</title><body style="font-family:sans-serif;padding:24px">'''
                '''<h2>Este link nao foi baixado</h2><p>Endereco original (copie se quiser abrir na internet):</p>'''
-               '''<p><code id="u"></code></p><p><a href="javascript:history.back()">Voltar</a></p>'''
-               '''<script>document.getElementById('u').textContent = decodeURIComponent(location.hash.slice(1))</script>''')
+               '''<p><code id="u"></code></p><p><a href="javascript:history.back()">Voltar</a> &nbsp; '''
+               '''<a id="ir" target="_blank" rel="noopener noreferrer">Abrir na internet &#8599;</a></p><script>'''
+               '''const u = decodeURIComponent(location.hash.slice(1)); document.getElementById('u').textContent = u;'''
+               '''if (/^https?:/.test(u)) document.getElementById('ir').href = u; else document.getElementById('ir').remove()</script>''')
 FORM = re.compile(r'<form\b([^>]*)>(.*?)</form>', re.I | re.S)
 
 
@@ -156,7 +161,7 @@ def links(texto, base, extras=()):
     texto = re.sub(r'<base\b[^>]*>', '', texto, flags=re.I)  # o <base> nao e link para baixar
     texto = re.sub(r'\\u002[fF]', '/', texto.replace('\\/', '/'))  # JSON escapa a barra: "https:\/\/site\/x.lua"
     achados = [next(x for x in m if x) for m in ATTR.findall(texto)]
-    achados += [a for a in QUOTADO.findall(texto) if '/' in a or extensao(a.split('#')[0]) not in DUVIDOSAS]
+    achados += [a for a in QUOTADO.findall(texto) if ',' not in a and ('/' in a or extensao(a.split('#')[0]) not in DUVIDOSAS)]  # ".lua,.txt" e filtro, nao arquivo
     if extensao(base) in ('m3u8', 'm3u'):  # playlist: cada linha sem '#' e um pedaco do video
         achados += [L.strip() for L in texto.splitlines() if L.strip() and not L.startswith('#')]
     if extras:  # extensions the user asked for: also look for them inside scripts ("dir/file.lua", 'https://x/y.lua')
@@ -168,7 +173,9 @@ def links(texto, base, extras=()):
     achados += ABS.findall(texto)
     out = []
     for a in achados:
-        if '${' in a or '{{' in a or a.startswith('%23'):  # modelo de JavaScript ("${base}.lua") ou ancora, nao e endereco
+        if '{' in a or '}' in a or a.startswith('%23'):  # modelo de JavaScript ("${base}.lua", "video/{0}") ou ancora, nao e endereco
+            continue
+        if re.match(r'\s*[\w.-]+\(', a):  # funcao de CSS/JS ("radial-gradient(...)", "t.getAttribute(") e nao arquivo
             continue
         u = urllib.parse.urljoin(base, htmllib.unescape(a.strip())).split('#')[0]  # &amp; do html vira &
         if u.startswith('http'):
@@ -217,7 +224,7 @@ input{flex:1;min-width:220px;padding:9px 12px;border:1px solid #dfe3ea;border-ra
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.chip{border:1px solid #dfe3ea;background:#fff;border-radius:99px;padding:4px 12px;cursor:pointer;font:inherit}
 .chip.on{background:#2563eb;color:#fff;border-color:#2563eb}.arvore{background:#fff;border:1px solid #dfe3ea;border-radius:10px;padding:8px 14px}
 details{margin-left:14px}details>summary{cursor:pointer;padding:3px 0;font-weight:600}details>summary small{font-weight:400}
-ul{list-style:none;margin:0;padding-left:28px}li{padding:2px 0}a{color:#2563eb}small{color:#6b7280}.arvore>details{margin-left:0}"""
+ul{list-style:none;margin:0;padding-left:28px}.nao>summary{color:#b45309}li{padding:2px 0}a{color:#2563eb}small{color:#6b7280}.arvore>details{margin-left:0}"""
 
 ESQUELETO_JS = """const q=document.getElementById('q');let g='';
 function filtra(){const t=q.value.toLowerCase();
@@ -232,7 +239,7 @@ BAT_COMPLETO = (  # servidor local (sem internet): com ele funcionam sites React
     'w.open(\'http://127.0.0.1:%%d/index.html\' %% s.server_address[1]); s.serve_forever()"\r\n')
 
 
-def gerar_indice(raiz, inicio, origem):
+def gerar_indice(raiz, inicio, origem, nao_copiados=None):
     """espelho/index.html (o site em tela cheia), espelho/mapa.html (esqueleto) e, na pasta escolhida,
     os atalhos 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat'"""
     esc, arvore, grupo_de = htmllib.escape, {}, {e: g for g, es in GRUPOS.items() for e in es}
@@ -266,13 +273,20 @@ def gerar_indice(raiz, inicio, origem):
         return ''.join(partes)
 
     tem_inicio = inicio and os.path.exists(inicio)
+    nao_copiados = nao_copiados or {}
+    if nao_copiados:  # o que ficou de fora, com o link direto para inspecionar no site ao vivo
+        contagem['Não copiados'] = len(nao_copiados)
+        nao_html = (f'<details class="nao"><summary>Não copiados <small>{len(nao_copiados)} &middot; o link abre o site ao vivo</small></summary><ul>'
+                    + ''.join(f'<li data-b="{esc((u + " " + m).lower())}" data-g="Não copiados"><a href="{esc(u)}" target="_blank" rel="noopener noreferrer">'
+                              f'{esc(u)} &#8599;</a> <small>{esc(m)}</small></li>' for u, m in sorted(nao_copiados.items(), key=lambda x: (x[1], x[0])))
+                    + '</ul></details>')
     chips = ''.join(f'<button class="chip" data-g="{esc(g)}">{esc(g)} {n}</button>' for g, n in sorted(contagem.items(), key=lambda x: -x[1]))
     open(os.path.join(raiz, 'mapa.html'), 'w', encoding='utf-8').write(
         f'<!doctype html><meta charset="utf-8"><title>Esqueleto do site</title><style>{ESQUELETO_CSS}</style>'
         f'<header><h1>Esqueleto do site</h1><p>{qtd} arquivos &middot; {tamanho(total)}</p></header><main>'
         f'<div class="barra"><input id="q" placeholder="Buscar arquivo ou endereço..." autofocus>'
         + (f'<a class="botao" href="{rel(inicio)}">Abrir site</a>' if tem_inicio else '') + f'</div><div class="chips">{chips}</div>'
-        f'<div class="arvore">{desenha(arvore) or "<p>Nenhum arquivo.</p>"}</div></main><script>{ESQUELETO_JS}</script>')
+        f'<div class="arvore">{desenha(arvore) or "<p>Nenhum arquivo.</p>"}{nao_html if nao_copiados else ""}</div></main><script>{ESQUELETO_JS}</script>')
     open(os.path.join(raiz, 'index.html'), 'w', encoding='utf-8').write(
         redireciona(rel(inicio), 'Abrir site') if tem_inicio else redireciona('mapa.html', 'Inicio nao baixado: veja o esqueleto'))
     pasta = os.path.dirname(os.path.abspath(raiz))
@@ -294,7 +308,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     except (OSError, ValueError):
         estado = {}
     original = lambda dest: os.path.join(painel, 'orig', os.path.relpath(dest, raiz))
-    frescos, falhas, pai, palpites = set(), {}, {}, set()  # pai: bases das paginas que carregaram cada script
+    frescos, falhas, pai, palpites, certos = set(), {}, {}, set(), set()  # pai: bases das paginas que carregaram cada script
     cookies = cookies or {}
     bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
@@ -323,7 +337,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if e in ext_excluidas or (e not in CONHECIDAS and not outros):
             return False
         h = urllib.parse.urlparse(u).netloc.lower().split(':')[0]
-        if urllib.parse.urlparse(u).netloc not in dominios and any(h == d or h.endswith('.' + d) for d in bloquear):
+        if urllib.parse.urlparse(u).netloc not in dominios and any(h == d or h.endswith('.' + d) or (d.endswith('.*') and h.startswith(d[:-1])) for d in bloquear):
             return False
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
             return False
@@ -333,17 +347,17 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
             return True
         if mesmo_site and p.netloc not in dominios and not (
-                recursos_fora and (e not in GRUPOS['Páginas'] or re.search(r'/css2?$', p.path))):  # shortcut: /css e /css2 = Google Fonts sem extensao
+                recursos_fora and ((e in CONHECIDAS and e not in GRUPOS['Páginas']) or re.search(r'/css2?$', p.path))):  # shortcut: /css e /css2 = Google Fonts sem extensao
             return False  # pagina de outro site; arquivos que a pagina usa (CDN, fontes, icones) vem sempre
         if robots and (e in GRUPOS['Páginas'] or p.netloc in dominios):  # arquivo da pagina vindo de CDN: o navegador tambem nao consulta robots
             h = urllib.parse.urlparse(u)
             with lock:
                 if h.netloc not in rp:
-                    r = urllib.robotparser.RobotFileParser(f'{h.scheme}://{h.netloc}/robots.txt')
-                    try:
-                        r.read()
+                    endereco, r = f'{h.scheme}://{h.netloc}/robots.txt', urllib.robotparser.RobotFileParser()
+                    try:  # com o mesmo nome e cookies do resto: o leitor do Python ("Python-urllib") e recusado por Cloudflare
+                        r.parse(NAVEGADOR.open(urllib.request.Request(endereco, headers=cab(endereco)), timeout=20).read().decode('utf-8', 'replace').splitlines())
                     except Exception:
-                        r = None
+                        r = None  # robots.txt com erro ou inexistente: nada proibido (como o Google faz)
                     rp[h.netloc] = r
             r = rp[h.netloc]
             if r and not r.can_fetch('leitura-pessoal', u):
@@ -416,7 +430,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if e.code == 416:  # o .part ja estava completo ou mudou: recomeca
                     os.remove(part)
                     continue
-                if e.code in (404, 410) and u in palpites:
+                if e.code in (403, 404, 410) and u in palpites and u not in certos:
                     return None, False
                 if tentativa == 2 or e.code in (403, 404, 410):
                     log(f'falhou {u}: {e}')
@@ -484,14 +498,15 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if html:
             base = base_de(texto, u)
         achados = links(texto, u, extras)
-        if extensao(u) in ('js', 'mjs', 'cjs', 'json') and pai.get(u):
-            # no script, fetch('x') vale a partir da pagina e import 'x' a partir do proprio .js: tenta os dois;
-            # o que so uma das bases acha e palpite (404 de palpite nao conta como falha)
-            por_base = [set(achados)] + [set(links(texto, b, extras)) for b in sorted(pai[u])]
-            certos = set.intersection(*por_base)
+        if extensao(u) in ('js', 'mjs', 'cjs', 'json'):
+            # endereco achado dentro de script e palpite (404/403 nao conta como falha); caminho relativo:
+            # fetch('x') vale a partir da pagina e import 'x' a partir do proprio .js, entao tenta os dois
+            achados = list(dict.fromkeys(achados + [v for b in sorted(pai.get(u, ())) for v in links(texto, b, extras)]))
             with lock:
-                palpites.update(set.union(*por_base) - certos)
-            achados = list(dict.fromkeys(achados + [v for b in por_base[1:] for v in b]))
+                palpites.update(achados)
+        else:
+            with lock:
+                certos.update(achados)
         for v in achados:
             if html:
                 with lock:
@@ -526,6 +541,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             for u, _ in repetir:
                 del falhas[u]
             list(pool.map(tratar, repetir))  # shortcut: nao segue links novos de quem so deu certo na repeticao
+    nao_copiados = {}  # links que a reescrita mandou para nao_baixado.html
     if reescrever:
         fora = os.path.join(raiz, 'nao_baixado.html')
         open(fora, 'w', encoding='utf-8').write(NAO_BAIXADO)
@@ -552,6 +568,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if alvo in mapa:
                     return urllib.parse.quote(os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/')) + ('#' + frag if frag else '')  # % e espaco no nome
                 if alvo.startswith('http'):
+                    nao_copiados[alvo] = None
                     return urllib.parse.quote(os.path.relpath(fora, os.path.dirname(dest)).replace(os.sep, '/')) + '#' + urllib.parse.quote(alvo, safe='')
                 return v  # data:, mailto:, javascript:
             def troca(m):
@@ -575,7 +592,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(''.join(f'{u}  ({c})\n' for u, c in falhas.items()))
     if falhas:
         log(f'aviso: {len(falhas)} nao baixaram (lista em {os.path.join(painel, "falhas.txt")})')
-    gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()})
+    motivos = {}
+    for u in set(falhas) | set(nao_copiados):
+        motivos[u] = (f'erro {falhas[u]}' if isinstance(falhas[u], int) else 'erro de rede') if u in falhas else \
+            'fora do limite (profundidade ou Arquivos máx.)' if permitido(u) else 'bloqueado (outro site, tipo, filtro, lista ou robots.txt)'
+    gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()}, motivos)
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:
             for d, ds, fs in os.walk(raiz):
@@ -587,7 +608,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
 PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
-              sitemap=True, form=False, atualizar=False, desmarcados=[], filtros='', extras='')
+              sitemap=True, form=False, atualizar=False, separados=False, desmarcados=[], filtros='', extras='')
 
 
 def ler(arquivo):
@@ -597,12 +618,22 @@ def ler(arquivo):
         return ''
 
 
+def separar(urls, pasta, separados):
+    """[(enderecos, pasta do espelho)]: tudo num espelho so, ou um por site (pasta/site.com/espelho) para rodar ao mesmo tempo"""
+    grupos = {}
+    for u in urls:
+        grupos.setdefault(urllib.parse.urlparse(u).netloc, []).append(u)
+    if not separados or len(grupos) < 2:
+        return [(urls, os.path.join(pasta, 'espelho'))]
+    return [(us, os.path.join(pasta, re.sub(r'[<>:"|?*\\/]', '_', site), 'espelho')) for site, us in grupos.items()]
+
+
 def argumentos(cfg):
-    """opcoes (da janela ou de um perfil) -> (urls, pasta do espelho, kwargs do espelhar)"""
+    """opcoes (da janela ou de um perfil) -> ([(enderecos, pasta do espelho)], kwargs do espelhar)"""
     c = {**PADRAO, **cfg}
     urls = [u.strip() for u in c['enderecos'].splitlines() if u.strip().startswith('http')]
     sem_formato = ler(LISTA_FORMATOS)
-    return urls, os.path.join(c['pasta'], 'espelho'), dict(
+    return separar(urls, c['pasta'], c['separados']), dict(
         profundidade=int(c['prof']), limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
         sitemap=c['sitemap'], formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], outros='Outros formatos' not in c['desmarcados'],
@@ -631,15 +662,22 @@ def rodar_perfis(nomes, atualizar=False):
         if not cfg:
             avisar(f'perfil nao encontrado: {nome}')
             continue
-        urls, raiz, kw = argumentos({**cfg, 'atualizar': atualizar or cfg.get('atualizar')})
-        os.makedirs(os.path.join(raiz, '.painel'), exist_ok=True)
-        ultimo, falhou = [''], [0]
-        with open(os.path.join(raiz, '.painel', 'ultimo.log'), 'w', encoding='utf-8') as arq:
-            def log(msg):
-                print(msg); arq.write(msg + '\n'); ultimo[0] = msg
-                falhou[0] += msg.startswith('falhou')
-            espelhar(urls, raiz, log, threading.Event(), **kw)
-        avisar(f'{nome}: ' + ultimo[0].replace('PRONTO: ', '') + (f' ({falhou[0]} falharam)' if falhou[0] else ''))
+        alvos, kw = argumentos({**cfg, 'atualizar': atualizar or cfg.get('atualizar')})
+
+        def um(urls, raiz):
+            os.makedirs(os.path.join(raiz, '.painel'), exist_ok=True)
+            ultimo, falhou = [''], [0]
+            with open(os.path.join(raiz, '.painel', 'ultimo.log'), 'w', encoding='utf-8') as arq:
+                def log(msg):
+                    print(msg); arq.write(msg + '\n'); ultimo[0] = msg
+                    falhou[0] += msg.startswith('falhou')
+                espelhar(urls, raiz, log, threading.Event(), **kw)
+            avisar(f'{nome}: ' + ultimo[0].replace('PRONTO: ', '') + (f' ({falhou[0]} falharam)' if falhou[0] else ''))
+        sites = [threading.Thread(target=um, args=a) for a in alvos]  # sites separados rodam ao mesmo tempo
+        for t in sites:
+            t.start()
+        for t in sites:
+            t.join()
 
 
 def agendar(nome, quando, dia, hora):
@@ -751,13 +789,15 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados')}
     var['form'].set(False)
     var['atualizar'].set(False)
+    var['separados'].set(False)
     for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('fora', 'Arquivos da página mesmo de outro site (ícones, fontes, CDN)'),
                                 ('rew', 'Reescrever links (abrir offline)'),
                                 ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'),
-                                ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'))):
+                                ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'),
+                                ('separados', 'Cada site numa cópia separada (todos ao mesmo tempo)'))):
         ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
 
     # aba Tipos de arquivo
@@ -805,7 +845,7 @@ def main():
     acao = ttk.Frame(corpo, padding=(0, 12))
     acao.pack(fill='x')
     parar = threading.Event()
-    trabalho = [None]
+    trabalho = []  # uma linha de trabalho por site
     botao = ttk.Button(acao, text='Baixar', style='Acao.TButton')
     botao.pack(side='left')
     ttk.Button(acao, text='Parar', command=parar.set).pack(side='left', padx=8)
@@ -833,7 +873,7 @@ def main():
         webbrowser.open(f'http://127.0.0.1:{servidor[r].server_address[1]}/index.html')
 
     for t, f in (('Abrir site', lambda: abrir(os.path.join(raiz_atual[0], 'index.html'))), ('Site completo', site_completo),
-                 ('Ver esqueleto', lambda: abrir(os.path.join(raiz_atual[0], 'mapa.html'))), ('Abrir pasta', lambda: abrir(os.path.dirname(raiz_atual[0])))):
+                 ('Ver esqueleto', lambda: abrir(os.path.join(raiz_atual[0], 'mapa.html'))), ('Abrir pasta', lambda: abrir(pasta_var.get() or os.path.dirname(raiz_atual[0])))):
         ttk.Button(resultado, text=t, command=f).pack(side='left', padx=(0, 8))
 
     registro = scrolledtext.ScrolledText(corpo, height=8, font=('Consolas', 9), bg=COR['log'], fg='#cbd5e1', insertbackground='white',
@@ -844,26 +884,27 @@ def main():
     registro.config(state='normal'); registro.insert('end', 'O andamento do download aparece aqui.\n', 'dica'); registro.config(state='disabled')
     registro.tag_configure('dica', foreground='#64748b')
 
+    contador = [0]
+
     def log(msg):
-        tag = ('falhou' if msg.startswith('falhou') else 'pronto' if msg.startswith('PRONTO') else
-               'aviso' if msg.startswith(('pulei', 'cortei', 'cole', 'aviso', 'continuando', 'Agendado', 'Nao consegui', 'Sem Agendador')) else 'ok' if 'ok (' in msg else '')
+        m = re.sub(r'^\[[^\]]*\] ', '', msg)  # tira o [site.com] de quando varios sites rodam juntos
+        tag = ('falhou' if m.startswith('falhou') else 'pronto' if m.startswith('PRONTO') else
+               'aviso' if m.startswith(('pulei', 'cortei', 'cole', 'aviso', 'continuando', 'Agendado', 'Nao consegui', 'Sem Agendador')) else 'ok' if 'ok (' in m else '')
         def add():
             registro.config(state='normal'); registro.insert('end', msg + '\n', tag); registro.see('end'); registro.config(state='disabled')
-            n = re.search(r'ok \((\d+)\)', msg)
-            if n:
-                status.set(f'{n.group(1)} arquivos baixados')
-            elif tag == 'pronto':
-                n = re.search(r'\d+', msg).group()
-                status.set(f'Concluído: {n} arquivos' + (' (parado)' if 'parado' in msg else ''))
-                w.bell()
-                if not w.focus_displayof():  # janela em segundo plano: avisa pelo Windows
-                    avisar(f'Concluído: {n} arquivos')
+            if tag == 'ok':
+                contador[0] += 1
+                status.set(f'{contador[0]} arquivos baixados')
         w.after(0, add)
 
     def vigiar():
-        if trabalho[0] and trabalho[0].is_alive():
+        if any(t.is_alive() for t in trabalho):
             w.after(300, vigiar)
         else:
+            status.set(f'Concluído: {contador[0]} arquivos' + (' (parado)' if parar.is_set() else ''))
+            w.bell()
+            if not w.focus_displayof():  # janela em segundo plano: avisa pelo Windows
+                avisar(status.get())
             barra.stop()
             barra.pack_forget()
             botao.state(['!disabled'])
@@ -953,18 +994,23 @@ def main():
         cfg = coleta()
         salva_listas()
         json.dump(cfg, open(CONFIG, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-        urls, raiz, kw = argumentos(cfg)
-        if not urls or not cfg['pasta']:
+        alvos, kw = argumentos(cfg)
+        if not alvos[0][0] or not cfg['pasta']:
             log('cole um endereco http e escolha uma pasta')
             return
         parar.clear()
         resultado.pack_forget()
-        raiz_atual[0] = raiz
+        raiz_atual[0] = alvos[0][1]  # botoes do fim abrem o primeiro site; 'Abrir pasta' mostra todos
+        contador[0] = 0
         registro.config(state='normal'); registro.delete('1.0', 'end'); registro.config(state='disabled')
         kw['cookies'] = {L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
                          L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()}
-        trabalho[0] = threading.Thread(target=espelhar, daemon=True, args=(urls, raiz, log, parar), kwargs=kw)
-        trabalho[0].start()
+        trabalho[:] = []
+        for urls, raiz in alvos:
+            site = urllib.parse.urlparse(urls[0]).netloc
+            lg = (lambda pre: lambda m: log(pre + m))(f'[{site}] ' if len(alvos) > 1 else '')
+            trabalho.append(threading.Thread(target=espelhar, daemon=True, args=(urls, raiz, lg, parar), kwargs=kw))
+            trabalho[-1].start()
         botao.state(['disabled'])
         status.set('Baixando...')
         barra.pack(side='right', padx=12)

@@ -12,7 +12,7 @@ import painel_download as p
 PAGINA = b'''<html><a href="/outra">outra</a><a href="/ferramenta">ferramenta</a><a href="/vip">vip</a><a href="/loja.php?a=1&amp;b=2">loja</a>
 <div data-download-url="/pacotes/mod.pak"></div><!-- "/escondido/velho.dll" --><a href="/v/lista.m3u8">video</a><a href="https://fora.example/pagina">fora</a>
 <script src="/sub/app.js" integrity="sha384-x"></script>
-<link rel="stylesheet" href="http://localhost:PORTA/cdn/css2?family=X"><a href="http://localhost:PORTA/fora.html">pagina de outro site</a><a href="/index.html">inicio de novo</a><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png">
+<link rel="stylesheet" href="http://localhost:PORTA/cdn/css2?family=X"><a href="http://localhost:PORTA/fora.html">pagina de outro site</a><a href="/index.html">inicio de novo</a><a href="/privado/x.html">privado</a><img src="https://www.facebook.com/tr.gif"><a href="https://x.com/perfil">x</a><img src="https://cdn.naoquero.example/a.png"><script src="https://analytics.contador.example/script.js"></script>
 <form action="/baixar" method="POST"><input type="hidden" name="_token" value="abc"><button type="submit"></button></form>
 <form action="/login" method="POST"><input type="hidden" name="_token" value="abc"><input type="password" name="senha"></form></html>'''
 
@@ -26,6 +26,11 @@ class H(http.server.BaseHTTPRequestHandler):
             ok = 'logado=sim' in (self.headers.get('Cookie') or '')
             self.send_response(200 if ok else 403); self.end_headers()
             self.wfile.write(b'<html>area vip</html>' if ok else b'')
+            return
+        if self.path == '/robots.txt':  # como Cloudflare: recusa o leitor padrao do Python
+            ok = 'Python-urllib' not in (self.headers.get('User-Agent') or '')
+            self.send_response(200 if ok else 403); self.end_headers()
+            self.wfile.write(b'User-agent: *\nDisallow: /privado/\n' if ok else b'')
             return
         if self.headers['Host'].startswith('localhost'):  # 'outro site' (CDN)
             if self.path == '/fora.html':
@@ -58,7 +63,7 @@ porta = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 raiz = os.path.join(tempfile.mkdtemp(), 'espelho')
 falhas = []
-p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=False, pausa=0, gerar_zip=False, formularios=True, bloquear=p.BLOQUEADOS | {'naoquero.example'}, cookies={f'127.0.0.1:{porta}': 'logado=sim'})
+p.espelhar([f'http://127.0.0.1:{porta}/'], raiz, lambda m: (print(m), m.startswith('falhou') and falhas.append(m)), threading.Event(), robots=True, pausa=0, gerar_zip=False, formularios=True, bloquear=p.BLOQUEADOS | {'naoquero.example'}, cookies={f'127.0.0.1:{porta}': 'logado=sim'})
 site = os.path.join(raiz, f'127.0.0.1_{porta}')
 assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de download'
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
@@ -82,7 +87,7 @@ assert '.painel' not in mapa and 'data-g="Código"' in mapa, 'esqueleto sem a pa
 ini = open(os.path.join(site, 'index.html'), encoding='utf-8').read()
 assert 'https://fora.example' not in ini and '../nao_baixado.html#https%3A%2F%2Ffora.example%2Fpagina' in ini, 'link de fora nao abre a internet'
 assert 'Content-Security-Policy' in ini and 'integrity' not in ini, 'trava de rede e sem integrity'
-assert 'href="http' not in mapa, 'mapa sem links para a internet'
+assert 'href="http' not in mapa.split('class="nao"')[0], 'arvore do esqueleto sem links para a internet (so a secao Nao copiados tem)'
 assert [f for f in os.listdir(site) if f.startswith('js_pagina')], 'pagina citada no js, dentro da profundidade'
 # profundidade 0 e saindo do dominio: so a pagina inicial e seus arquivos; rede social nunca
 raiz0, log0 = os.path.join(tempfile.mkdtemp(), 'espelho'), []
@@ -92,10 +97,13 @@ site0 = os.path.join(raiz0, f'127.0.0.1_{porta}')
 assert os.path.exists(os.path.join(site0, 'sub', 'app.js')) and not os.path.exists(os.path.join(site0, 'outra.html')), 'profundidade 0'
 assert not [f for f in os.listdir(site0) if f.startswith('js_pagina')], 'pagina citada no js respeita a profundidade'
 assert not [d for d in os.listdir(raiz0) if 'facebook' in d or d.startswith('x.com')], 'rede social bloqueada'
-assert not [m for m in log0 if 'facebook' in m or '//x.com' in m or 'naoquero' in m], log0
+assert not [m for m in log0 if 'facebook' in m or '//x.com' in m or 'naoquero' in m or 'contador' in m], log0
 cdn = os.path.join(raiz, f'localhost_{porta}', 'cdn')
 assert os.path.exists(os.path.join(cdn, 'fonte.woff2')) and [f for f in os.listdir(cdn) if f.endswith('.css')], 'arquivos da pagina vindos de outro site (CDN)'
 assert '.css' in open(os.path.join(site, 'index.html'), encoding='utf-8').read().split('localhost_')[1][:60], 'pagina aponta para o .css local'
+assert not os.path.exists(os.path.join(site, 'privado')), 'robots.txt respeitado (lido com o nome do painel)'
+assert 'fora.example/pagina' in mapa and 'target="_blank"' in mapa and 'data-g="Não copiados"' in mapa, 'esqueleto lista o que nao foi copiado com link direto'
+assert 'privado/x.html' in mapa and 'robots.txt' in mapa, 'motivo do bloqueio'
 print('TESTE OK')
 
 # --- download: nome real, tipo, logout, continuar .part, repetir falhas, atualizar ---
@@ -179,4 +187,19 @@ assert os.path.exists(os.path.join(site3, 'index.html')) and os.path.exists(os.p
 assert not os.path.exists(os.path.join(site3, 'pacote.zip')), 'formato bloqueado na lista'
 assert not os.path.exists(os.path.join(site3, 'api.php.json')), 'tipo desmarcado no perfil'
 assert 'PRONTO' in open(os.path.join(tmp, 'espelho', '.painel', 'ultimo.log')).read(), 'registro do agendamento'
+# varios sites, cada um separado e ao mesmo tempo (127.0.0.1 e localhost contam como dois sites)
+json.dump({'enderecos': f'http://127.0.0.1:{p2}/\nhttp://localhost:{p2}/', 'pasta': tmp, 'robots': False, 'pausa': 0, 'zip': False,
+           'sitemap': False, 'separados': True}, open(os.path.join(p.PERFIS, 'dois.json'), 'w'))
+p.rodar_perfis(['dois'])
+for site in (f'127.0.0.1_{p2}', f'localhost_{p2}'):
+    assert os.path.exists(os.path.join(tmp, site, 'espelho', site, 'index.html')), 'site separado: ' + site
+    assert os.path.exists(os.path.join(tmp, site, 'Abrir site.html')), 'atalhos de cada site'
+assert p.separar(['http://a.com/x', 'http://a.com/y'], '/p', True) == [(['http://a.com/x', 'http://a.com/y'], os.path.join('/p', 'espelho'))], 'mesmo site fica junto'
 print('TESTE AUTOMACAO OK')
+
+# --- codigo que parece endereco mas nao e (achados em sites reais) ---
+js = '''const e=new URL(this.config.iconUrl,window.location); a={api:"https://vimeo.com/api/oembed.json?url={0}"};
+el.style.background = "radial-gradient(circle, rgba(3,167,211,0.8) 0%, transparent 70%)"; c="title.class";
+css="body{background:url(img/bg.png)}"; h='<a href="docs/foto (1).png">x</a>'; f=".lua,.txt"; g=Ra("googletag.cmd") '''
+assert sorted(set(p.links(js, 'https://s.com/'))) == ['https://s.com/docs/foto (1).png', 'https://s.com/img/bg.png'], p.links(js, 'https://s.com/')
+print('TESTE FALSOS ENDERECOS OK')
