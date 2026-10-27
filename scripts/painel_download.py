@@ -80,7 +80,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 52  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 53  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -204,9 +204,17 @@ def normal(u):
 
 
 def extensao(url):
-    """'lua' de x/main.lua; tambem 'htaccess' de /.htaccess e 'dockerfile' de /Dockerfile"""
-    n = os.path.basename(urllib.parse.urlparse(url).path)
-    return n.lower() if n in SEM_PONTO else n.rsplit('.', 1)[1].lower() if '.' in n else ''
+    """'lua' de x/main.lua; 'htaccess' de /.htaccess; 'jpg' de .../TW8.jpg/revision/latest (Fandom poe o nome no meio)"""
+    caminho = urllib.parse.urlparse(url).path
+    n = os.path.basename(caminho)
+    if n in SEM_PONTO:
+        return n.lower()
+    if '.' in n:
+        return n.rsplit('.', 1)[1].lower()
+    for parte in reversed(caminho.split('/')):  # sem extensao no fim: usa a ultima extensao conhecida do caminho
+        if '.' in parte and parte.rsplit('.', 1)[1].lower() in CONHECIDAS:
+            return parte.rsplit('.', 1)[1].lower()
+    return ''
 
 
 def caminho_local(raiz, url):
@@ -215,11 +223,12 @@ def caminho_local(raiz, url):
     if c.endswith('/') or not c:
         c += 'index.html'
     nome = re.sub(r'[<>:"|?*\\]', '_', c.strip('/'))
+    sufixo = '.' + (extensao(url) or 'html')  # nome real da Fandom (.jpg) em vez de .html, quando o fim do endereco nao tem extensao
     if p.query:
         base, ext = os.path.splitext(nome)
-        nome = base + '_' + hashlib.md5(p.query.encode()).hexdigest()[:8] + (ext or '.html')
+        nome = base + '_' + hashlib.md5(p.query.encode()).hexdigest()[:8] + (ext or sufixo)
     elif '.' not in os.path.basename(nome) and os.path.basename(nome) not in SEM_PONTO:
-        nome += '.html'
+        nome += sufixo
     if extensao(nome) in DINAMICAS:
         nome += '.html'
     return os.path.join(raiz, re.sub(r'[<>:"|?*]', '_', p.netloc), nome)

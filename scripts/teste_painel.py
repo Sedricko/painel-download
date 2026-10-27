@@ -315,3 +315,10 @@ assert 'allow ads' not in pagina, 'tira o pop-up de anti-adblock'
 assert 'src="logo.png"' in pagina or 'src=logo.png' in pagina, 'imagem preguicosa aparece (data-src vira src)'
 assert 'conteudo do wiki' in pagina, 'o conteudo continua la'
 print('TESTE MODO LEITURA OK')
+
+# --- extensao no meio do caminho (Fandom: TW8.jpg/revision/latest) ---
+assert p.extensao('https://static.wikia.nocookie.net/x/images/a/a5/TW8.jpg/revision/latest?cb=1') == 'jpg', 'acha a extensao no meio do caminho'
+assert p.extensao('https://s/x/TW8.jpg/revision/latest/scale-to-width-down/185?cb=1') == 'jpg', 'acha ate no thumb redimensionado'
+assert p.extensao('https://s/pagina') == '' and p.extensao('https://s/a/b.php') == 'php', 'pagina normal nao muda'
+assert p.caminho_local('/r', 'https://static.wikia.nocookie.net/x/a/TW8.jpg/revision/latest?cb=1').endswith('.jpg'), 'salva com .jpg, nao .html'
+print('TESTE IMAGEM FANDOM OK')
