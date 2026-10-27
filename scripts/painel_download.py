@@ -76,11 +76,13 @@ LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 
 SEM_PONTO = {'Dockerfile', 'Makefile', 'Procfile', 'Jenkinsfile'}  # arquivos conhecidos sem extensao
 DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app', 'key', 'sys', 'lib', 'env', 'dat', 'img', 'bin',
                                                      'run', 'mod', 'obj', 'ct', 'esp', 'sig', 'assets', 'bundle', 'config', 'data', 'lock', 'class', 'cmd'}
+# so contam com '/' no caminho: nome de midia/fonte solto num texto e rotulo (data-image-name="RM2.jpg", alt), nao um endereco; o link real vem com caminho no src/href
+SO_COM_CAMINHO = {*GRUPOS['Imagens'], *GRUPOS['Áudio'], *GRUPOS['Vídeo'], *GRUPOS['Fontes']}
 MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.-]+\.(?:css|js)$')  # nome de modulo do MediaWiki (sem barra), nao um arquivo
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 55  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 56  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -266,7 +268,7 @@ def links(texto, base, extras=()):
         nome = a.split('#')[0]
         if ',' in a or MODULO.match(nome):  # ".lua,.txt" e filtro; "ext.fandom.X.css" e nome de modulo do MediaWiki, nao arquivo
             continue
-        if '/' in a or extensao(nome) not in DUVIDOSAS:
+        if '/' in a or extensao(nome) not in DUVIDOSAS | SO_COM_CAMINHO:
             achados.append(a)
     if extensao(base) in ('m3u8', 'm3u'):  # playlist: cada linha sem '#' e um pedaco do video
         achados += [L.strip() for L in texto.splitlines() if L.strip() and not L.startswith('#')]

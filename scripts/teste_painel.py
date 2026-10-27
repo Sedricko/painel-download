@@ -341,3 +341,13 @@ assert 'editar/historico' in p.motivo_falha('https://x.fandom.com/wiki/SPELLS?ac
 assert 'File:CM45.jpg' not in '' and '404' in p.motivo_falha('https://x.fandom.com/wiki/Category:Videos', 404), 'pagina real some: so o 404'
 assert 'rede' in p.motivo_falha('https://x/y', 'timeout'), 'erro de rede'
 print('TESTE MOTIVO FALHA OK')
+
+# --- nao inventar /wiki/NOME.jpg a partir de data-image-name (bug Fandom RM2) ---
+fandom_fig = '''<figure><a href="https://static.wikia.nocookie.net/x/images/c/c9/RM2.jpg/revision/latest?cb=1" class="image"><img alt="RM2" src="data:image/gif;base64,R0lGODlhAQAB" class="lazyload" data-image-name="RM2.jpg" data-image-key="RM2.jpg" data-src="https://static.wikia.nocookie.net/x/images/c/c9/RM2.jpg/revision/latest/scale-to-width-down/850?cb=1" /></a><figcaption><a href="/wiki/File:RM2.jpg" class="info-icon"></a></figcaption></figure>'''
+achados = p.links(fandom_fig, 'https://heroic-magic-duel.fandom.com/wiki/RARE_MINIONS')
+assert not any(u.endswith('/wiki/RM2.jpg') for u in achados), 'nao inventa /wiki/RM2.jpg de data-image-name'
+assert any('static.wikia' in u and u.endswith('RM2.jpg/revision/latest') for u in achados), 'a imagem real (static.wikia) continua sendo pega'
+assert any(u.endswith('/wiki/File:RM2.jpg') for u in achados), 'a pagina File: continua sendo pega'
+# nome de arquivo real escondido em script (com caminho) nao pode ser perdido
+assert any(u.endswith('/js/app.lua') for u in p.links('var x="/js/app.lua"', 'https://s/p')), 'arquivo com caminho em script continua'
+print('TESTE SEM LINK FANTASMA OK')
