@@ -2,9 +2,10 @@
 Rodar: python teste_painel.py"""
 import http.server, os, sys, tempfile, threading, types
 
-for m in ('tkinter', 'tkinter.filedialog', 'tkinter.scrolledtext', 'tkinter.ttk'):  # o teste nao abre janela
+for m in ('tkinter', 'tkinter.filedialog', 'tkinter.scrolledtext', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.simpledialog'):  # o teste nao abre janela
     sys.modules.setdefault(m, types.ModuleType(m))
-sys.modules['tkinter'].filedialog, sys.modules['tkinter'].scrolledtext, sys.modules['tkinter'].ttk = sys.modules['tkinter.filedialog'], sys.modules['tkinter.scrolledtext'], sys.modules['tkinter.ttk']
+for m in ('filedialog', 'scrolledtext', 'ttk', 'messagebox', 'simpledialog'):
+    setattr(sys.modules['tkinter'], m, sys.modules['tkinter.' + m])
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import painel_download as p
 
@@ -66,7 +67,11 @@ assert loja and loja[0].endswith('.php.html'), 'pagina .php salva como .html (co
 assert not falhas, falhas
 mapa = open(os.path.join(raiz, 'mapa.html'), encoding='utf-8').read()
 assert f'127.0.0.1_{porta}/script.lua' in mapa and f'127.0.0.1_{porta}/sub/app.js' in mapa, 'mapa com todos os arquivos'
-assert f'src="127.0.0.1_{porta}/index.html"' in open(os.path.join(raiz, 'index.html'), encoding='utf-8').read(), 'inicio'
+assert f'url=127.0.0.1_{porta}/index.html' in open(os.path.join(raiz, 'index.html'), encoding='utf-8').read(), 'inicio em tela cheia'
+pasta = os.path.dirname(raiz)
+for atalho in ('Abrir site.html', 'Esqueleto do site.html', 'Abrir site completo.bat'):
+    assert os.path.exists(os.path.join(pasta, atalho)), 'atalho ' + atalho
+assert '.painel' not in mapa and 'data-g="Código"' in mapa, 'esqueleto sem a pasta interna, com tipos'
 ini = open(os.path.join(site, 'index.html'), encoding='utf-8').read()
 assert 'https://fora.example' not in ini and '../nao_baixado.html#https%3A%2F%2Ffora.example%2Fpagina' in ini, 'link de fora nao abre a internet'
 assert 'Content-Security-Policy' in ini and 'integrity' not in ini, 'trava de rede e sem integrity'
@@ -149,3 +154,19 @@ rodar(atualizar=True)
 assert os.path.exists(os.path.join(site2, 'novo2.txt')), 'atualizar baixa o que mudou'
 assert 'nao_baixado' not in ''.join(x[0] for x in pedidos), 'nao segue links reescritos'
 print('TESTE DOWNLOAD OK')
+
+# --- automacao: perfil rodado sem janela (o que o agendamento do Windows chama) ---
+tmp = tempfile.mkdtemp()
+p.PERFIS, p.LISTA_BLOQUEIO, p.LISTA_FORMATOS = os.path.join(tmp, 'perfis'), os.path.join(tmp, 'b.txt'), os.path.join(tmp, 'f.txt')
+os.makedirs(p.PERFIS)
+open(p.LISTA_FORMATOS, 'w').write('zip\n')
+import json
+json.dump({'enderecos': f'http://127.0.0.1:{p2}/', 'pasta': tmp, 'robots': False, 'pausa': 0, 'zip': False, 'sitemap': False,
+           'desmarcados': ['Dados']}, open(os.path.join(p.PERFIS, 'meu-site.json'), 'w'))
+p.rodar_perfis(['meu-site', 'nao-existe'], atualizar=True)
+site3 = os.path.join(tmp, 'espelho', f'127.0.0.1_{p2}')
+assert os.path.exists(os.path.join(site3, 'index.html')) and os.path.exists(os.path.join(tmp, 'Abrir site completo.bat')), 'perfil rodou'
+assert not os.path.exists(os.path.join(site3, 'pacote.zip')), 'formato bloqueado na lista'
+assert not os.path.exists(os.path.join(site3, 'api.php.json')), 'tipo desmarcado no perfil'
+assert 'PRONTO' in open(os.path.join(tmp, 'espelho', '.painel', 'ultimo.log')).read(), 'registro do agendamento'
+print('TESTE AUTOMACAO OK')

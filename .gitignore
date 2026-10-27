@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 scripts/sites_bloqueados.txt
 scripts/formatos_bloqueados.txt
+scripts/painel_config.json
+scripts/perfis/

@@ -5,11 +5,14 @@
 - filtros no estilo HTTrack, um por linha: +*.pdf (inclui, mesmo de outro site)  -*.gif (exclui)
 - profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes, pausa entre pedidos
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora anuncios e redes sociais
+- atualizar: so baixa de novo o que mudou (ETag/Last-Modified); continua download cortado; repete o que falhou por erro de rede
+- no fim cria, na pasta escolhida: 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat' (servidor local)
+- perfis + agendamento: python painel_download.py --perfil nome [--perfil outro] [--atualizar] roda sem janela
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
-import fnmatch, hashlib, html as htmllib, http.cookiejar, json, mimetypes, os, re, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, zipfile
+import fnmatch, functools, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
 from concurrent.futures import ThreadPoolExecutor
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 BLOQUEADOS = {  # lixo conhecido (caixa 'Bloquear anuncios e redes sociais'); vale para o site e todos os subdominios
     # anuncios e rastreadores
@@ -59,7 +62,8 @@ GRUPOS = {
     'Fontes': ('woff', 'woff2', 'ttf', 'otf', 'eot'),
     'Outros conhecidos': ('torrent', 'crt', 'cer', 'pem', 'gpg', 'sig', 'sha256', 'md5', 'iss', 'nsi'),
 }
-LISTA_BLOQUEIO, LISTA_FORMATOS = (os.path.join(os.path.dirname(os.path.abspath(__file__)), n) for n in ('sites_bloqueados.txt', 'formatos_bloqueados.txt'))
+AQUI = os.path.dirname(os.path.abspath(__file__))
+LISTA_BLOQUEIO, LISTA_FORMATOS, CONFIG, PERFIS = (os.path.join(AQUI, n) for n in ('sites_bloqueados.txt', 'formatos_bloqueados.txt', 'painel_config.json', 'perfis'))
 CONHECIDAS = {e for g in GRUPOS.values() for e in g}
 DINAMICAS = {'php', 'asp', 'aspx', 'jsp', 'jspx', 'cfm', 'cgi', 'shtml', 'phtml', 'erb', 'cshtml'}  # pagina gerada no servidor: salva como .html para abrir offline
 LER = {'html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'cjs', 'json', 'xml', 'svg', 'txt', 'm3u8', 'm3u', 'webmanifest', 'rss', 'atom', 'jsonld',
@@ -194,30 +198,89 @@ def ler_sitemaps(sites, log):
     return achados
 
 
+def tamanho(n):
+    return f'{n / (1 << 30):.1f} GB' if n >= 1 << 30 else f'{n / (1 << 20):.1f} MB' if n >= 1 << 20 else f'{max(1, n >> 10)} KB'
+
+
+def redireciona(alvo, titulo):
+    """pagina que so abre outra (atalho)"""
+    a = htmllib.escape(alvo)
+    return (f'<!doctype html><meta charset="utf-8"><title>{titulo}</title><meta http-equiv="refresh" content="0;url={a}">'
+            f'<script>location.replace({json.dumps(alvo)})</script><a href="{a}">{titulo}</a>')
+
+
+ESQUELETO_CSS = """*{box-sizing:border-box}body{margin:0;font:14px 'Segoe UI',system-ui,sans-serif;background:#f4f6fa;color:#1f2937}
+header{background:#111827;color:#fff;padding:16px 24px}header h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:#9ca3af}
+main{max-width:1100px;margin:0 auto;padding:16px 24px}.barra{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+input{flex:1;min-width:220px;padding:9px 12px;border:1px solid #dfe3ea;border-radius:8px;font:inherit}input:focus{outline:2px solid #2563eb}
+.botao{background:#2563eb;color:#fff;padding:9px 18px;border-radius:8px;text-decoration:none;font-weight:600}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.chip{border:1px solid #dfe3ea;background:#fff;border-radius:99px;padding:4px 12px;cursor:pointer;font:inherit}
+.chip.on{background:#2563eb;color:#fff;border-color:#2563eb}.arvore{background:#fff;border:1px solid #dfe3ea;border-radius:10px;padding:8px 14px}
+details{margin-left:14px}details>summary{cursor:pointer;padding:3px 0;font-weight:600}details>summary small{font-weight:400}
+ul{list-style:none;margin:0;padding-left:28px}li{padding:2px 0}a{color:#2563eb}small{color:#6b7280}.arvore>details{margin-left:0}"""
+
+ESQUELETO_JS = """const q=document.getElementById('q');let g='';
+function filtra(){const t=q.value.toLowerCase();
+document.querySelectorAll('li[data-b]').forEach(li=>li.hidden=(t&&!li.dataset.b.includes(t))||(g&&li.dataset.g!==g));
+document.querySelectorAll('.arvore details').forEach(d=>{const v=d.querySelector('li[data-b]:not([hidden])');d.hidden=!v;if(t||g)d.open=!!v;});}
+q.oninput=filtra;document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{g=c.classList.contains('on')?'':c.dataset.g;
+document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x.dataset.g===g));filtra();});"""
+
+BAT_COMPLETO = (  # servidor local (sem internet): com ele funcionam sites React/Vue que abertos da pasta ficam em branco
+    '@echo off\r\ncd /d "%~dp0espelho"\r\necho Site aberto no navegador. Feche esta janela para parar.\r\n'
+    'python -c "import http.server as h, webbrowser as w; s=h.ThreadingHTTPServer((\'127.0.0.1\', 0), h.SimpleHTTPRequestHandler); '
+    'w.open(\'http://127.0.0.1:%%d/index.html\' %% s.server_address[1]); s.serve_forever()"\r\n')
+
+
 def gerar_indice(raiz, inicio, origem):
-    """espelho/index.html (abre o inicio do site) e espelho/mapa.html (esqueleto: todos os arquivos com link direto)"""
-    esc, pastas = htmllib.escape, {}
-    for d, _, fs in os.walk(raiz):
+    """espelho/index.html (o site em tela cheia), espelho/mapa.html (esqueleto) e, na pasta escolhida,
+    os atalhos 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat'"""
+    esc, arvore, grupo_de = htmllib.escape, {}, {e: g for g, es in GRUPOS.items() for e in es}
+    contagem, total, qtd = {}, 0, 0
+    for d, ds, fs in os.walk(raiz):
+        ds[:] = sorted(x for x in ds if x != '.painel')
         for f in sorted(fs):
-            if not (d == raiz and f in ('index.html', 'mapa.html', 'nao_baixado.html')) and not f.endswith('.part'):
-                pastas.setdefault(os.path.relpath(d, raiz).replace(os.sep, '/'), []).append(os.path.join(d, f))
+            if (d == raiz and f in ('index.html', 'mapa.html', 'nao_baixado.html')) or f.endswith('.part'):
+                continue
+            c = os.path.join(d, f)
+            no = arvore
+            for parte in os.path.relpath(d, raiz).split(os.sep):
+                if parte != '.':
+                    no = no.setdefault(parte + '/', {})
+            g = grupo_de.get(extensao(c.replace(os.sep, '/')), 'Outros formatos')
+            no.setdefault('', []).append((c, g))
+            contagem[g] = contagem.get(g, 0) + 1
+            total, qtd = total + os.path.getsize(c), qtd + 1
     rel = lambda c: urllib.parse.quote(os.path.relpath(c, raiz).replace(os.sep, '/'))
-    corpo = []
-    for pasta in sorted(pastas):
-        corpo.append(f'<h2>{esc(pasta)}/</h2><ul>')
-        for c in pastas[pasta]:
-            u = origem.get(c)
-            corpo.append(f'<li><a href="{rel(c)}">{esc(os.path.basename(c))}</a> <small>{os.path.getsize(c) // 1024} KB'
-                         + (f' &middot; {esc(u)}' if u else '') + '</small></li>')
-        corpo.append('</ul>')
-    estilo = '<meta charset="utf-8"><style>body{font-family:sans-serif;margin:0}nav{background:#222;padding:8px}nav a{color:#fff;margin-right:16px}main{padding:0 16px}small{color:#777}</style>'
-    nav = '<nav><a href="index.html">Inicio do site</a><a href="mapa.html">Mapa dos arquivos</a></nav>'
-    total = sum(len(v) for v in pastas.values())
+
+    def desenha(no):
+        partes = []
+        for nome in sorted(k for k in no if k):
+            dentro = desenha(no[nome])
+            partes.append(f'<details{" open" if no is arvore else ""}><summary>{esc(nome)} <small>{dentro.count("<li ")} arquivo{"s" if dentro.count("<li ") != 1 else ""}</small></summary>{dentro}</details>')
+        if no.get(''):
+            partes.append('<ul>' + ''.join(
+                f'<li data-b="{esc((os.path.basename(c) + " " + (origem.get(c) or "")).lower())}" data-g="{esc(g)}">'
+                f'<a href="{rel(c)}">{esc(os.path.basename(c))}</a> <small>{tamanho(os.path.getsize(c))}'
+                + (f' &middot; {esc(origem[c])}' if origem.get(c) else '') + '</small></li>' for c, g in no['']) + '</ul>')
+        return ''.join(partes)
+
+    tem_inicio = inicio and os.path.exists(inicio)
+    chips = ''.join(f'<button class="chip" data-g="{esc(g)}">{esc(g)} {n}</button>' for g, n in sorted(contagem.items(), key=lambda x: -x[1]))
     open(os.path.join(raiz, 'mapa.html'), 'w', encoding='utf-8').write(
-        f'<!doctype html><title>Mapa do espelho</title>{estilo}{nav}<main><h1>{total} arquivos</h1>{"".join(corpo)}</main>')
+        f'<!doctype html><meta charset="utf-8"><title>Esqueleto do site</title><style>{ESQUELETO_CSS}</style>'
+        f'<header><h1>Esqueleto do site</h1><p>{qtd} arquivos &middot; {tamanho(total)}</p></header><main>'
+        f'<div class="barra"><input id="q" placeholder="Buscar arquivo ou endereço..." autofocus>'
+        + (f'<a class="botao" href="{rel(inicio)}">Abrir site</a>' if tem_inicio else '') + f'</div><div class="chips">{chips}</div>'
+        f'<div class="arvore">{desenha(arvore) or "<p>Nenhum arquivo.</p>"}</div></main><script>{ESQUELETO_JS}</script>')
     open(os.path.join(raiz, 'index.html'), 'w', encoding='utf-8').write(
-        f'<!doctype html><title>Espelho offline</title>{estilo}<style>iframe{{border:0;width:100%;height:calc(100vh - 40px)}}</style>{nav}'
-        + (f'<iframe src="{rel(inicio)}"></iframe>' if inicio and os.path.exists(inicio) else '<main><p>Inicio nao baixado; veja o mapa.</p></main>'))
+        redireciona(rel(inicio), 'Abrir site') if tem_inicio else redireciona('mapa.html', 'Inicio nao baixado: veja o esqueleto'))
+    pasta = os.path.dirname(os.path.abspath(raiz))
+    nome = os.path.basename(os.path.abspath(raiz))
+    for arquivo, conteudo in (('Abrir site.html', redireciona(nome + '/index.html', 'Abrir site')),
+                              ('Esqueleto do site.html', redireciona(nome + '/mapa.html', 'Esqueleto do site'))):
+        open(os.path.join(pasta, arquivo), 'w', encoding='utf-8').write(conteudo)
+    open(os.path.join(pasta, 'Abrir site completo.bat'), 'w', encoding='utf-8', newline='').write(BAT_COMPLETO.replace('espelho', nome, 1))
 
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
@@ -328,6 +391,10 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if int(r.headers.get('Content-Length') or 0) + total > max_mb << 20:
                     log(f'pulei {u}: maior que {max_mb} MB')
                     return None, False
+                final = dest if info.get('dest') else nome_real(u, dest, r)
+                if extensao(final.replace(os.sep, '/')) in ext_excluidas:  # so o servidor revelou o tipo (download.php -> .zip)
+                    log(f'pulei {u}: formato .{extensao(final.replace(os.sep, "/"))} desmarcado')
+                    return None, False
                 if continua:
                     log(f'continuando {u} de {ja_part >> 10} KB')
                 with open(part, 'ab' if continua else 'wb') as f:
@@ -337,7 +404,6 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                             log(f'cortei {u} em {max_mb} MB')
                             break
                         f.write(chunk)
-                final = dest if info.get('dest') else nome_real(u, dest, r)
                 os.replace(part, final)
                 with lock:
                     estado[u] = {'dest': os.path.relpath(final, raiz), 'etag': r.headers.get('ETag'), 'lm': r.headers.get('Last-Modified')}
@@ -500,6 +566,77 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     log(f'PRONTO: {baixados[0]} arquivos em {raiz}' + (' + .zip' if gerar_zip else '') + (' (parado)' if parar.is_set() else ''))
 
 
+# opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
+PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, lixo=True, robots=True, rew=True, zip=True,
+              sitemap=True, form=False, atualizar=False, desmarcados=[], filtros='', extras='')
+
+
+def ler(arquivo):
+    try:
+        return open(arquivo, encoding='utf-8').read()
+    except OSError:
+        return ''
+
+
+def argumentos(cfg):
+    """opcoes (da janela ou de um perfil) -> (urls, pasta do espelho, kwargs do espelhar)"""
+    c = {**PADRAO, **cfg}
+    urls = [u.strip() for u in c['enderecos'].splitlines() if u.strip().startswith('http')]
+    sem_formato = ler(LISTA_FORMATOS)
+    return urls, os.path.join(c['pasta'], 'espelho'), dict(
+        profundidade=int(c['prof']), limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
+        conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
+        sitemap=c['sitemap'], formularios=c['form'], atualizar=c['atualizar'], outros='Outros formatos' not in c['desmarcados'],
+        ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
+        | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
+        extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
+        bloquear=(BLOQUEADOS if c['lixo'] else set()) | {L.split('#')[0] for L in ler(LISTA_BLOQUEIO).splitlines()})
+
+
+def avisar(texto):
+    """balao de aviso do Windows (sem instalar nada); em outro sistema so escreve na tela"""
+    print(texto)
+    if os.name == 'nt':
+        t = texto.replace("'", "''")
+        subprocess.Popen(['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+                          "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; "
+                          "$n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; "
+                          f"$n.ShowBalloonTip(10000, 'Painel de Download', '{t}', 'Info'); Start-Sleep 11; $n.Dispose()"],
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+
+
+def rodar_perfis(nomes, atualizar=False):
+    """sem janela, um perfil depois do outro (fila); e o que o agendamento do Windows chama"""
+    for nome in nomes:
+        cfg = json.loads(ler(os.path.join(PERFIS, nome + '.json')) or 'null')
+        if not cfg:
+            avisar(f'perfil nao encontrado: {nome}')
+            continue
+        urls, raiz, kw = argumentos({**cfg, 'atualizar': atualizar or cfg.get('atualizar')})
+        os.makedirs(os.path.join(raiz, '.painel'), exist_ok=True)
+        ultimo, falhou = [''], [0]
+        with open(os.path.join(raiz, '.painel', 'ultimo.log'), 'w', encoding='utf-8') as arq:
+            def log(msg):
+                print(msg); arq.write(msg + '\n'); ultimo[0] = msg
+                falhou[0] += msg.startswith('falhou')
+            espelhar(urls, raiz, log, threading.Event(), **kw)
+        avisar(f'{nome}: ' + ultimo[0].replace('PRONTO: ', '') + (f' ({falhou[0]} falharam)' if falhou[0] else ''))
+
+
+def agendar(nome, quando, dia, hora):
+    """cria a tarefa no Agendador do Windows: roda o perfil sozinho, so baixando o que mudou"""
+    pyw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = pyw if os.path.exists(pyw) else sys.executable  # pythonw: sem janela preta
+    tarefa = f'Painel de Download - {nome}'
+    if os.name != 'nt':
+        m, h = hora.split(':')[1], hora.split(':')[0]
+        return f'Sem Agendador do Windows aqui. No crontab: {int(m)} {int(h)} * * {"*" if quando == "DAILY" else dia} {exe} {os.path.abspath(__file__)} --perfil "{nome}" --atualizar'
+    cmd = ['schtasks', '/Create', '/F', '/TN', tarefa, '/SC', quando, '/ST', hora,
+           '/TR', f'"{exe}" "{os.path.abspath(__file__)}" --perfil "{nome}" --atualizar'] + (['/D', dia] if quando == 'WEEKLY' else [])
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return f'Agendado: "{tarefa}"' if r.returncode == 0 else 'Nao consegui agendar: ' + (r.stderr or r.stdout).strip()
+
+
 def main():
     COR = {'fundo': '#f4f6fa', 'cartao': '#ffffff', 'borda': '#dfe3ea', 'texto': '#1f2937', 'suave': '#6b7280',
            'destaque': '#2563eb', 'destaque2': '#1d4ed8', 'topo': '#111827', 'log': '#0f172a'}
@@ -525,6 +662,8 @@ def main():
     st.configure('TSpinbox', fieldbackground='white', padding=3, arrowsize=12, background=COR['cartao'], **plano)
     st.map('TEntry', bordercolor=[('focus', COR['destaque'])])
     st.map('TSpinbox', bordercolor=[('focus', COR['destaque'])])
+    st.configure('TCombobox', padding=4, arrowsize=14, background=COR['cartao'], **plano)
+    st.map('TCombobox', fieldbackground=[('readonly', 'white')], bordercolor=[('focus', COR['destaque'])])
     st.configure('TButton', padding=(16, 7), background=COR['cartao'], **plano)
     st.map('TButton', background=[('active', '#eef2f7')])
     st.configure('Acao.TButton', font=('Segoe UI', 10, 'bold'), foreground='white', background=COR['destaque'], padding=(26, 8),
@@ -562,6 +701,14 @@ def main():
     pasta_var = tk.StringVar()
     ttk.Entry(linha_pasta, textvariable=pasta_var).pack(side='left', fill='x', expand=True, ipady=3)
     ttk.Button(linha_pasta, text='Escolher...', command=lambda: pasta_var.set(filedialog.askdirectory(title='Pasta onde salvar o espelho') or pasta_var.get())).pack(side='left', padx=(8, 0))
+    rotulo(cartao, 'Perfil', 'guarde as opções de um site com um nome; agende para atualizar sozinho')
+    linha_perfil = ttk.Frame(cartao, style='Cartao.TFrame')
+    linha_perfil.pack(fill='x')
+    perfil = ttk.Combobox(linha_perfil, state='readonly', width=30)
+    perfil.pack(side='left', ipady=2)
+    botoes_perfil = {t: ttk.Button(linha_perfil, text=t) for t in ('Salvar perfil', 'Excluir', 'Agendar...')}
+    for b in botoes_perfil.values():
+        b.pack(side='left', padx=(8, 0))
 
     abas = ttk.Notebook(corpo)
     abas.pack(fill='x', pady=(12, 0))
@@ -585,10 +732,12 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar')}
     var['form'].set(False)
+    var['atualizar'].set(False)
     for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('rew', 'Reescrever links (abrir offline)'),
-                                ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'))):
+                                ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'),
+                                ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'))):
         ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
 
     # aba Tipos de arquivo
@@ -643,8 +792,31 @@ def main():
     status = tk.StringVar(value='Pronto para começar')
     ttk.Label(acao, textvariable=status, foreground=COR['suave']).pack(side='right')
     barra = ttk.Progressbar(acao, mode='indeterminate', length=180)  # so aparece enquanto baixa
+    resultado = ttk.Frame(corpo)  # aparece quando termina
+    raiz_atual, servidor = [''], {}
 
-    registro = scrolledtext.ScrolledText(corpo, height=12, font=('Consolas', 9), bg=COR['log'], fg='#cbd5e1', insertbackground='white',
+    def abrir(caminho):
+        if os.name == 'nt':
+            os.startfile(caminho)
+        else:
+            webbrowser.open('file://' + urllib.request.pathname2url(os.path.abspath(caminho)))
+
+    def site_completo():
+        """servidor local (sem internet) so enquanto o painel esta aberto: sites React/Vue funcionam"""
+        r = raiz_atual[0]
+        if r not in servidor:
+            class Quieto(http.server.SimpleHTTPRequestHandler):
+                def log_message(self, *a):
+                    pass
+            servidor[r] = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quieto, directory=r))
+            threading.Thread(target=servidor[r].serve_forever, daemon=True).start()
+        webbrowser.open(f'http://127.0.0.1:{servidor[r].server_address[1]}/index.html')
+
+    for t, f in (('Abrir site', lambda: abrir(os.path.join(raiz_atual[0], 'index.html'))), ('Site completo', site_completo),
+                 ('Ver esqueleto', lambda: abrir(os.path.join(raiz_atual[0], 'mapa.html'))), ('Abrir pasta', lambda: abrir(os.path.dirname(raiz_atual[0])))):
+        ttk.Button(resultado, text=t, command=f).pack(side='left', padx=(0, 8))
+
+    registro = scrolledtext.ScrolledText(corpo, height=8, font=('Consolas', 9), bg=COR['log'], fg='#cbd5e1', insertbackground='white',
                                          relief='flat', bd=0, padx=10, pady=8, state='disabled')
     registro.pack(fill='both', expand=True, pady=(0, 16))
     for tag, cor in (('ok', '#4ade80'), ('falhou', '#f87171'), ('aviso', '#fbbf24'), ('pronto', '#60a5fa')):
@@ -654,14 +826,18 @@ def main():
 
     def log(msg):
         tag = ('falhou' if msg.startswith('falhou') else 'pronto' if msg.startswith('PRONTO') else
-               'aviso' if msg.startswith(('pulei', 'cortei', 'cole')) else 'ok' if 'ok (' in msg else '')
+               'aviso' if msg.startswith(('pulei', 'cortei', 'cole', 'aviso', 'continuando', 'Agendado', 'Nao consegui', 'Sem Agendador')) else 'ok' if 'ok (' in msg else '')
         def add():
             registro.config(state='normal'); registro.insert('end', msg + '\n', tag); registro.see('end'); registro.config(state='disabled')
             n = re.search(r'ok \((\d+)\)', msg)
             if n:
                 status.set(f'{n.group(1)} arquivos baixados')
             elif tag == 'pronto':
-                status.set(f"Concluído: {re.search(r'\d+', msg).group()} arquivos" + (' (parado)' if 'parado' in msg else ''))
+                n = re.search(r'\d+', msg).group()
+                status.set(f'Concluído: {n} arquivos' + (' (parado)' if 'parado' in msg else ''))
+                w.bell()
+                if not w.focus_displayof():  # janela em segundo plano: avisa pelo Windows
+                    avisar(f'Concluído: {n} arquivos')
         w.after(0, add)
 
     def vigiar():
@@ -671,33 +847,103 @@ def main():
             barra.stop()
             barra.pack_forget()
             botao.state(['!disabled'])
+            if raiz_atual[0] and os.path.exists(os.path.join(raiz_atual[0], 'index.html')):
+                resultado.pack(fill='x', pady=(0, 10), before=registro)
+
+    def coleta():
+        """opcoes da janela num dicionario (o mesmo formato de um perfil)"""
+        return dict(enderecos=caixa.get('1.0', 'end').strip(), pasta=pasta_var.get(), filtros=filtros.get('1.0', 'end').strip(),
+                    extras=extras_caixa.get(), desmarcados=[n for n, v in tipos.items() if not v.get()],
+                    **{k: campos[k].get() for k in campos}, **{k: v.get() for k, v in var.items()})
+
+    def aplica(cfg):
+        c = {**PADRAO, **cfg}
+        for widget, chave in ((caixa, 'enderecos'), (filtros, 'filtros')):
+            widget.delete('1.0', 'end'); widget.insert('1.0', c[chave])
+        extras_caixa.delete(0, 'end'); extras_caixa.insert(0, c['extras'])
+        pasta_var.set(c['pasta'])
+        for k in campos:
+            campos[k].set(c[k])
+        for k, v in var.items():
+            v.set(c[k])
+        for n, v in tipos.items():
+            v.set(n not in c['desmarcados'])
+
+    def salva_listas():
+        for arquivo, c in ((LISTA_BLOQUEIO, bloq_caixa), (LISTA_FORMATOS, form_caixa)):
+            open(arquivo, 'w', encoding='utf-8').write(c.get('1.0', 'end').strip() + '\n')
+
+    def lista_perfis():
+        perfil['values'] = sorted(f[:-5] for f in os.listdir(PERFIS) if f.endswith('.json')) if os.path.isdir(PERFIS) else []
+
+    def carrega_perfil(_=None):
+        aplica(json.loads(ler(os.path.join(PERFIS, perfil.get() + '.json')) or '{}'))
+        log(f'perfil carregado: {perfil.get()}')
+
+    def salva_perfil():
+        nome = simpledialog.askstring('Salvar perfil', 'Nome do perfil (ex.: meu-site):', initialvalue=perfil.get(), parent=w)
+        nome = re.sub(r'[<>:"/|?*\\]', '_', (nome or '').strip())
+        if nome:
+            os.makedirs(PERFIS, exist_ok=True)
+            json.dump(coleta(), open(os.path.join(PERFIS, nome + '.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+            salva_listas()
+            lista_perfis()
+            perfil.set(nome)
+            log(f'perfil salvo: {nome} (cookies nao sao salvos)')
+
+    def exclui_perfil():
+        if perfil.get() and messagebox.askyesno('Excluir perfil', f'Excluir o perfil "{perfil.get()}"?', parent=w):
+            os.remove(os.path.join(PERFIS, perfil.get() + '.json'))
+            perfil.set('')
+            lista_perfis()
+
+    def janela_agendar():
+        if not perfil.get():
+            messagebox.showinfo('Agendar', 'Salve um perfil primeiro: o agendamento roda um perfil.', parent=w)
+            return
+        j = tk.Toplevel(w, bg=COR['cartao'], padx=18, pady=14)
+        j.title('Agendar atualização')
+        j.transient(w)
+        ttk.Label(j, text=f'Atualizar "{perfil.get()}" sozinho, baixando só o que mudou', style='Cartao.TLabel').grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 10))
+        quando, dia, hora = ttk.Combobox(j, values=['Todo dia', 'Toda semana'], state='readonly', width=12), ttk.Combobox(
+            j, values=['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'], state='readonly', width=6), ttk.Entry(j, width=7)
+        quando.set('Toda semana'); dia.set('SEG'); hora.insert(0, '03:00')
+        for i, (t, wd) in enumerate((('Quando', quando), ('Dia', dia), ('Hora', hora))):
+            ttk.Label(j, text=t, style='Dica.TLabel').grid(row=1, column=i, sticky='w', padx=(0, 10))
+            wd.grid(row=2, column=i, sticky='w', padx=(0, 10))
+
+        def ok():
+            if not re.fullmatch(r'\d{1,2}:\d{2}', hora.get().strip()):
+                messagebox.showerror('Agendar', 'Hora no formato 03:00', parent=j)
+                return
+            ingles = dict(zip(['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'], ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']))
+            log(agendar(perfil.get(), 'DAILY' if quando.get() == 'Todo dia' else 'WEEKLY', ingles[dia.get()], hora.get().strip().zfill(5)))
+            j.destroy()
+        ttk.Button(j, text='Agendar', style='Acao.TButton', command=ok).grid(row=2, column=3, padx=(10, 0))
+
+    perfil.bind('<<ComboboxSelected>>', carrega_perfil)
+    for t, f in (('Salvar perfil', salva_perfil), ('Excluir', exclui_perfil), ('Agendar...', janela_agendar)):
+        botoes_perfil[t].config(command=f)
+    lista_perfis()
+    aplica(json.loads(ler(CONFIG) or '{}'))  # volta como estava da ultima vez
 
     def iniciar():
-        urls = [u.strip() for u in caixa.get('1.0', 'end').splitlines() if u.strip().startswith('http')]
-        if not urls:
-            log('cole um endereco http')
-            return
         if not pasta_var.get():
             pasta_var.set(filedialog.askdirectory(title='Pasta onde salvar o espelho') or '')
-        pasta = pasta_var.get()
-        if not pasta:
+        cfg = coleta()
+        salva_listas()
+        json.dump(cfg, open(CONFIG, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+        urls, raiz, kw = argumentos(cfg)
+        if not urls or not cfg['pasta']:
             log('cole um endereco http e escolha uma pasta')
             return
         parar.clear()
+        resultado.pack_forget()
+        raiz_atual[0] = raiz
         registro.config(state='normal'); registro.delete('1.0', 'end'); registro.config(state='disabled')
-        bloq, sem_formato = (c.get('1.0', 'end').strip() for c in (bloq_caixa, form_caixa))
-        for arquivo, conteudo in ((LISTA_BLOQUEIO, bloq), (LISTA_FORMATOS, sem_formato)):
-            open(arquivo, 'w', encoding='utf-8').write(conteudo + '\n')
-        trabalho[0] = threading.Thread(target=espelhar, daemon=True, args=(urls, os.path.join(pasta, 'espelho'), log, parar), kwargs=dict(
-            profundidade=int(campos['prof'].get()), limite=int(campos['lim'].get()), mesmo_site=var['mesmo'].get(),
-            filtros=filtros.get('1.0', 'end'), max_mb=int(campos['mb'].get()), conexoes=int(campos['con'].get()),
-            pausa=float(campos['pausa'].get()), robots=var['robots'].get(), reescrever=var['rew'].get(), gerar_zip=var['zip'].get(), sitemap=var['sitemap'].get(), formularios=var['form'].get(),
-            ext_excluidas={e for n, v in tipos.items() if not v.get() and n in GRUPOS for e in GRUPOS[n]}
-            | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')}, outros=tipos['Outros formatos'].get(),
-            extras=[x for x in re.split(r'[\s,;]+', extras_caixa.get()) if x],
-            bloquear=(BLOQUEADOS if var['lixo'].get() else set()) | {L.split('#')[0] for L in bloq.splitlines()},
-            cookies={L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
-                     L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()}))
+        kw['cookies'] = {L.split(':', 1)[0].strip().lower().replace('https://', '').replace('http://', '').split('/')[0]:
+                         L.split(':', 1)[1].strip() for L in cookies_caixa.get('1.0', 'end').splitlines() if ':' in L and L.strip()}
+        trabalho[0] = threading.Thread(target=espelhar, daemon=True, args=(urls, raiz, log, parar), kwargs=kw)
         trabalho[0].start()
         botao.state(['disabled'])
         status.set('Baixando...')
@@ -708,5 +954,9 @@ def main():
     botao.config(command=iniciar)
     w.mainloop()
 
+
 if __name__ == '__main__':
-    main()
+    if '--perfil' in sys.argv:  # sem janela: python painel_download.py --perfil site1 [--perfil site2 ...] [--atualizar]
+        rodar_perfis([sys.argv[i + 1] for i, a in enumerate(sys.argv[:-1]) if a == '--perfil'], '--atualizar' in sys.argv)
+    else:
+        main()
