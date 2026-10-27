@@ -79,6 +79,18 @@ DUVIDOSAS = {e for e in CONHECIDAS if len(e) < 3} | {'com', 'log', 'map', 'app',
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
+VERSAO_PAINEL = 48  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
+
+
+def versao_nova():
+    """texto da versao mais nova no GitHub, ou None (sem internet ou ja atualizado)"""
+    try:
+        txt = urllib.request.urlopen(urllib.request.Request(RAW, headers={'User-Agent': UA}), timeout=8).read().decode('utf-8')
+    except Exception:
+        return None
+    m = re.search(r'^VERSAO_PAINEL = (\d+)', txt, re.M)
+    return txt if m and int(m.group(1)) > VERSAO_PAINEL and 'def versao_nova' in txt else None
 JAR = http.cookiejar.CookieJar()  # guarda o cookie da sessao durante o download, como o navegador
 NAVEGADOR = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -771,7 +783,23 @@ def agendar(nome, quando, dia, hora):
     return f'Agendado: "{tarefa}"' if r.returncode == 0 else 'Nao consegui agendar: ' + (r.stderr or r.stdout).strip()
 
 
+def atualizar_do_github():
+    """baixa a versao nova do GitHub, se substitui e reabre; silencioso se nao houver novidade/internet"""
+    if os.environ.get('PAINEL_SEM_UPDATE'):  # ja reaberto nesta cadeia: nao tenta de novo (evita loop)
+        return
+    txt = versao_nova()
+    if not txt:
+        return
+    try:
+        open(os.path.abspath(__file__), 'w', encoding='utf-8').write(txt)
+        os.environ['PAINEL_SEM_UPDATE'] = '1'
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])  # reabre ja com o codigo novo
+    except Exception:
+        pass  # sem permissao de escrita etc.: segue com a versao atual
+
+
 def main():
+    atualizar_do_github()
     COR = {'fundo': '#f4f6fa', 'cartao': '#ffffff', 'borda': '#dfe3ea', 'texto': '#1f2937', 'suave': '#6b7280',
            'destaque': '#2563eb', 'destaque2': '#1d4ed8', 'topo': '#111827', 'log': '#0f172a'}
     w = tk.Tk()

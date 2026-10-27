@@ -230,3 +230,20 @@ p._getaddrinfo('127.0.0.1', 80)  # host que resolve: nao usa o DoH
 assert chamou == [], 'DNS do sistema tem prioridade'
 p.resolver_doh = _orig_resolver
 print('TESTE DNS OK')
+
+# --- atualizacao pelo GitHub: compara VERSAO, so aceita arquivo que parece o painel ---
+import urllib.request as _ur
+_orig_open = _ur.urlopen
+def _fake(resp):
+    class R:
+        def read(self_): return resp.encode('utf-8')
+    p._ur_saved = None
+    _ur.urlopen = lambda *a, **k: R()
+novo = f'VERSAO_PAINEL = {p.VERSAO_PAINEL + 1}\ndef versao_nova(): pass\n# resto'
+_fake(novo);  assert p.versao_nova() == novo, 'versao maior e valida -> atualiza'
+_fake(f'VERSAO_PAINEL = {p.VERSAO_PAINEL}\ndef versao_nova(): pass'); assert p.versao_nova() is None, 'mesma versao -> nao atualiza'
+_fake(f'VERSAO_PAINEL = {p.VERSAO_PAINEL + 1}\n# sem a funcao'); assert p.versao_nova() is None, 'arquivo estranho -> nao atualiza'
+def _erro(*a, **k): raise OSError('sem rede')
+_ur.urlopen = _erro; assert p.versao_nova() is None, 'sem internet -> nao atualiza'
+_ur.urlopen = _orig_open
+print('TESTE UPDATE OK')
