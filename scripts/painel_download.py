@@ -12,7 +12,7 @@
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos.
 - opcional: renderiza as paginas num navegador de verdade (Playwright) e pega o que o JavaScript monta e pede"""
-import codecs, fnmatch, functools, gzip, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, socket, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile
+import codecs, fnmatch, functools, gzip, hashlib, html as htmllib, http.cookiejar, http.server, json, mimetypes, os, re, socket, subprocess, sys, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, webbrowser, zipfile, zlib
 import queue
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -85,7 +85,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 64  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 65  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -177,9 +177,9 @@ def grava_txt(c, texto, enc):
 
 
 class Renderizador:
-    """navegador (Playwright) numa linha propria: a API sync so funciona na linha que a criou"""
-    def __init__(self, log, cookies):
-        self.fila, self.log, self.cookies, self.linha = queue.Queue(), log, cookies, None
+    """navegadores (Playwright), cada um na sua linha: a API sync so funciona na linha que a criou"""
+    def __init__(self, log, cookies, abas=1):
+        self.fila, self.log, self.cookies, self.abas, self.linhas = queue.Queue(), log, cookies, max(1, abas), []
 
     def _roda(self):
         try:
@@ -223,18 +223,20 @@ class Renderizador:
 
     def __call__(self, u):
         """(html depois do JavaScript, [enderecos pedidos]) ou None"""
-        if not self.linha:
-            self.linha = threading.Thread(target=self._roda, daemon=True)
-            self.linha.start()
+        if not self.linhas:
+            self.linhas = [threading.Thread(target=self._roda, daemon=True) for _ in range(self.abas)]
+            for t in self.linhas:
+                t.start()
         saida, pronto = [], threading.Event()
         self.fila.put((u, saida, pronto))
         pronto.wait()
         return saida[0]
 
     def fechar(self):
-        if self.linha:
+        for _ in self.linhas:
             self.fila.put(None)
-            self.linha.join(30)
+        for t in self.linhas:
+            t.join(30)
 
 
 def atributo(tag, nome):
@@ -504,7 +506,7 @@ def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False, renderizar=False):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False, so_faltou=False, renderizar=False, prof_fora=1):
     os.makedirs(raiz, exist_ok=True)
     log_dns[0] = log
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
@@ -527,7 +529,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     cookies = cookies or {}
     bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
-    render = Renderizador(log, cookies) if renderizar else None
+    render = Renderizador(log, cookies, min(conexoes, 4)) if renderizar else None  # shortcut: no maximo 4 navegadores (memoria)
 
     def cab(u, extra=None):
         """cabecalhos; junta o cookie da sessao (JAR) com o cookie do login do dominio (areas que pedem login)"""
@@ -545,7 +547,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     filtros = '\n'.join(('+*' + f.strip() if f.strip().startswith('.') else f) for f in filtros.splitlines())  # '.lua' means +*.lua
     mais = [f[1:].strip() for f in filtros.splitlines() if f.startswith('+')]
     menos = [f[1:].strip() for f in filtros.splitlines() if f.startswith('-')]
-    rp, lock, ultimo = {}, threading.Lock(), {}  # ultimo pedido de cada site: a pausa vale por site
+    rp, lock, ultimo, atraso, saltos = {}, threading.Lock(), {}, {}, {}  # atraso: Crawl-delay; saltos: paginas seguidas fora do site  # ultimo pedido de cada site: a pausa vale por site
     feitos, mapa, baixados, origem_link = set(urls), {}, [0], {}  # origem_link: 1a pagina onde cada link apareceu
 
     def porque(u):
@@ -576,6 +578,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     except Exception:
                         r = None  # robots.txt com erro ou inexistente: nada proibido (como o Google faz)
                     rp[h.netloc] = r
+                    if r and r.crawl_delay('leitura-pessoal'):  # o site pede intervalo entre pedidos
+                        atraso[h.netloc] = min(30.0, float(r.crawl_delay('leitura-pessoal')))
             r = rp[h.netloc]
             if r and not r.can_fetch('leitura-pessoal', u):  # casa as regras de User-agent: * do site
                 return 'proibido pelo robots.txt do site'
@@ -610,13 +614,16 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if parar.is_set():
                 return None, False
             with lock:
-                espera = ultimo.get(site, 0.0) + pausa - time.time()
-                ultimo[site] = max(time.time(), ultimo.get(site, 0.0)) + (pausa if espera > 0 else 0)
+                pz = max(pausa, atraso.get(site, 0.0))
+                espera = ultimo.get(site, 0.0) + pz - time.time()
+                ultimo[site] = max(time.time(), ultimo.get(site, 0.0)) + (pz if espera > 0 else 0)
             if espera > 0:
                 time.sleep(espera)
             extra, ja_part = {}, os.path.getsize(part) if os.path.exists(part) else 0
             if ja_part:
                 extra['Range'] = f'bytes={ja_part}-'
+            elif extensao(u) in LER or extensao(u) in GRUPOS['Páginas']:  # texto vem compactado (menos internet); .gz/.zip nunca
+                extra['Accept-Encoding'] = 'gzip'
             if os.path.exists(dest):  # modo atualizar: o servidor responde 304 se nao mudou
                 extra.update({k: info[c] for k, c in (('If-None-Match', 'etag'), ('If-Modified-Since', 'lm')) if info.get(c)})
             try:
@@ -632,13 +639,17 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     return None, False
                 if continua:
                     log(f'continuando {u} de {ja_part >> 10} KB')
+                dz = zlib.decompressobj(16 + zlib.MAX_WBITS) if (r.headers.get('Content-Encoding') or '').lower() == 'gzip' else None
                 with open(part, 'ab' if continua else 'wb') as f:
                     while chunk := r.read(1 << 20):
+                        chunk = dz.decompress(chunk) if dz else chunk
                         total += len(chunk)
                         if total > max_mb << 20:
                             log(f'cortei {u} em {max_mb} MB')
                             break
                         f.write(chunk)
+                    if dz:
+                        f.write(dz.flush())
                 os.replace(part, final)
                 with lock:
                     estado[u] = {'dest': os.path.relpath(final, raiz), 'etag': r.headers.get('ETag'), 'lm': r.headers.get('Last-Modified')}
@@ -743,6 +754,12 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             eh_pagina = extensao(v) in GRUPOS['Páginas'] and not DIRETO.match(v)  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
+            if eh_pagina and urllib.parse.urlparse(v).netloc not in dominios:  # pagina de outro site: conta os saltos para fora
+                s = saltos.get(u, 0) + 1
+                if s > prof_fora:
+                    continue
+                with lock:
+                    saltos[v] = min(s, saltos.get(v, s))
             novos.append((v, prof + 1 if eh_pagina else prof))
         return novos
 
@@ -890,7 +907,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
-PADRAO = dict(enderecos='', pasta='', prof=3, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
+PADRAO = dict(enderecos='', pasta='', prof=3, prof_fora=1, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
               sitemap=True, form=False, render=False, atualizar=False, separados=False, so_coladas=False, leitura=False, so_faltou=False, desmarcados=[], filtros='', extras='')
 
 
@@ -917,7 +934,7 @@ def argumentos(cfg):
     urls = [u.strip() for u in c['enderecos'].splitlines() if u.strip().startswith('http')]
     sem_formato = ler(LISTA_FORMATOS)
     return separar(urls, c['pasta'], c['separados']), dict(
-        limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
+        limite=int(c['lim']), prof_fora=int(c['prof_fora']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
         profundidade=0 if c['so_coladas'] else int(c['prof']), sitemap=c['sitemap'] and not c['so_coladas'],
         formularios=c['form'], renderizar=c['render'], atualizar=c['atualizar'] or c['so_faltou'], so_faltou=c['so_faltou'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
@@ -1080,7 +1097,7 @@ def main():
     linha = ttk.Frame(geral, style='Cartao.TFrame')
     linha.pack(anchor='w')
     campos = {}
-    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Arquivos máx.', 'lim', 6000, 50), ('MB por arquivo', 'mb', 5000, 50),
+    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Níveis fora do site', 'prof_fora', 1, 1), ('Arquivos máx.', 'lim', 6000, 50), ('MB por arquivo', 'mb', 5000, 50),
                                                       ('Conexões', 'con', 2, 1), ('Pausa (s)', 'pausa', 1.0, 0.1))):
         ttk.Label(linha, text=nome, style='Dica.TLabel').grid(row=0, column=i, sticky='w', padx=(0, 16))
         campos[chave] = ttk.Spinbox(linha, from_=0, to=99999, increment=passo, width=9)

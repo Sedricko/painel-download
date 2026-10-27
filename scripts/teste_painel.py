@@ -482,3 +482,39 @@ if importlib.util.find_spec('playwright'):
     print('TESTE RENDERIZAR OK')
 else:
     print('(sem playwright: teste de renderizar pulado)')
+
+# --- niveis fora do site, Crawl-delay e texto compactado (gzip) ---
+vez = []
+
+
+class H10(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        h, pth = self.headers['Host'].split(':')[0], self.path
+        vez.append((h, pth, time.time()))
+        if pth == '/robots.txt':
+            corpo = b'User-agent: *\nCrawl-delay: 1\n' if h == '127.0.0.1' else b''
+        elif h == '127.0.0.1':  # site principal -> pagina de fora (localhost) -> outra de fora (nao pode com 1 nivel)
+            corpo = b'<html><a href="http://localhost:%d/f1.html">f1</a><a href="/a.txt">a</a></html>' % porta10 if pth == '/' else b'texto'
+        else:
+            corpo = b'<html><a href="/f2.html">f2</a></html>' if pth == '/f1.html' else b'<html>f2</html>'
+        gz = 'gzip' in (self.headers.get('Accept-Encoding') or '') and pth == '/'
+        self.send_response(200)
+        if gz:
+            corpo = gzip.compress(corpo); self.send_header('Content-Encoding', 'gzip')
+        self.end_headers(); self.wfile.write(corpo)
+
+
+srv10 = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H10)
+porta10 = srv10.server_address[1]
+threading.Thread(target=srv10.serve_forever, daemon=True).start()
+raiz10 = os.path.join(tempfile.mkdtemp(), 'espelho')
+p.espelhar([f'http://127.0.0.1:{porta10}/'], raiz10, print, threading.Event(), mesmo_site=False, prof_fora=1, pausa=0, gerar_zip=False, sitemap=False, conexoes=4)
+fora10 = os.path.join(raiz10, f'localhost_{porta10}')
+assert os.path.exists(os.path.join(fora10, 'f1.html')) and not os.path.exists(os.path.join(fora10, 'f2.html')), 'niveis fora do site'
+assert 'f1.html' in open(os.path.join(raiz10, f'127.0.0.1_{porta10}', 'index.html'), encoding='utf-8').read(), 'pagina gzip descompactada'
+t = sorted(x[2] for x in vez if x[0] == '127.0.0.1' and x[1] in ('/', '/a.txt'))
+assert t[-1] - t[0] >= 0.9, 'Crawl-delay respeitado'
+print('TESTE NIVEIS FORA, CRAWL-DELAY E GZIP OK')

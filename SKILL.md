@@ -22,13 +22,14 @@ baixa o site e manda o `.zip` na conversa. So para **paginas e arquivos publicos
 - Filtros estilo HTTrack, um por linha: `+*.pdf` (inclui, mesmo de outro site), `-*.gif` (exclui); `.lua` vale como `+*.lua`.
 - Caixas de tipo de arquivo (Paginas, Estilos e scripts, Imagens, Documentos, Dados, Compactados, Programas, Audio, Video, Fontes, Outros): tudo marcado, o usuario desmarca o que nao quer.
 - Campo **Extensoes extras** (ex.: `lua, cfg`): procura essas extensoes tambem dentro de scripts, em caminhos relativos e absolutos.
-- Profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes (fila continua: arquivo lento nao trava os outros), pausa entre pedidos, respeita `Retry-After` do 429/503, preserva paginas em iso-8859-1/windows-1252, retoma (arquivo ja baixado nao baixa de novo), ignora dominios de anuncio.
+- **Niveis fora do site** (com "So o mesmo site" desmarcado): quantos saltos de pagina em outros dominios seguir (1 = so as paginas que o site linka, nao os links delas).
+- Profundidade (so conta paginas HTML), limite de paginas, MB por arquivo, varias conexoes (fila continua: arquivo lento nao trava os outros), pausa entre pedidos, respeita `Retry-After` do 429/503 e o `Crawl-delay` do robots.txt, pede texto compactado (gzip), preserva paginas em iso-8859-1/windows-1252, retoma (arquivo ja baixado nao baixa de novo), ignora dominios de anuncio.
 - **Respeitar robots.txt**: ligado por padrao; so desligar em site do proprio usuario.
 - Campo **Cookies** (so sites seus): para areas que pedem login (free/VIP). O usuario loga no navegador, copia o cookie e cola um por linha `site.com: cookie`; o painel usa o cookie certo em cada dominio. Login nao passa de um site para outro: um cookie por site, mesmo com a mesma senha.
 
 ## Limites (diga ao usuario)
 - Nao faz login. Botoes de download (form `POST` com `_token` e so campos escondidos): so com a caixa **Botoes de download (so site proprio)**, desligada por padrao, e so no mesmo site; nunca envia form com campo de texto/senha.
-- Sem a caixa **Renderizar JavaScript** (aba Avancado) nao acha nomes montados por codigo (`"dir/" + nome + ".lua"`) nem conteudo que so aparece depois de JavaScript. Com ela, cada pagina abre num navegador de verdade (Playwright: `pip install playwright`; usa o Edge/Chrome do PC) e entra o HTML final + tudo que o JavaScript pediu. Mais lento: uma pagina por vez.
+- Sem a caixa **Renderizar JavaScript** (aba Avancado) nao acha nomes montados por codigo (`"dir/" + nome + ".lua"`) nem conteudo que so aparece depois de JavaScript. Com ela, cada pagina abre num navegador de verdade (Playwright: `pip install playwright`; usa o Edge/Chrome do PC) e entra o HTML final + tudo que o JavaScript pediu. Mais lento: ate 4 navegadores em paralelo (segue Conexoes).
 - Nao adivinha enderecos nem varre servidores. Nao use para contornar protecoes, nem para CDNs/buckets de terceiros.
 - Arquivos `.exe`/`.dll` ficam parados no zip; o usuario nao deve abrir os de fonte desconhecida.
 - Erros `404` no log costumam ser textos de JavaScript que pareciam enderecos; sem problema.
