@@ -531,9 +531,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 alvo, _, frag = alvo.partition('#')
                 alvo = normal(alvo)
                 if alvo in mapa:
-                    return os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') + ('#' + frag if frag else '')
+                    return urllib.parse.quote(os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/')) + ('#' + frag if frag else '')  # % e espaco no nome
                 if alvo.startswith('http'):
-                    return os.path.relpath(fora, os.path.dirname(dest)).replace(os.sep, '/') + '#' + urllib.parse.quote(alvo, safe='')
+                    return urllib.parse.quote(os.path.relpath(fora, os.path.dirname(dest)).replace(os.sep, '/')) + '#' + urllib.parse.quote(alvo, safe='')
                 return v  # data:, mailto:, javascript:
             def troca(m):
                 v = next(x for x in m.groups() if x)
