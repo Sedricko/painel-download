@@ -80,7 +80,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 51  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 52  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -384,7 +384,7 @@ def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False, recursos_fora=True, leitura=False):
     os.makedirs(raiz, exist_ok=True)
     log_dns[0] = log
     painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
@@ -656,6 +656,18 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             else:
                 continue  # ja reescrito por uma versao antiga do painel
             b = base_de(texto, u)
+            pagina_html = dest.lower().endswith(('.html', '.htm', '.xhtml'))
+            if leitura and pagina_html:
+                def mostra_imagem(m):  # imagem preguicosa: poe o endereco real (data-src) no src, senao ela so aparece com JS
+                    tag = m.group(0)
+                    ds = re.search(r'\bdata-(?:src|original|lazy-src)\s*=\s*(["\'])(.*?)\1', tag, re.I)
+                    if not ds:
+                        return tag
+                    if re.search(r'\bsrc\s*=', tag, re.I):
+                        return re.sub(r'\bsrc\s*=\s*(["\']).*?\1', 'src=' + ds.group(1) + ds.group(2) + ds.group(1), tag, count=1, flags=re.I)
+                    return tag[:-1] + ' src=' + ds.group(1) + ds.group(2) + ds.group(1) + '>'
+                texto = re.sub(r'<img\b[^>]*>', mostra_imagem, texto, flags=re.I)
+                texto = re.sub(r'</?noscript[^>]*>', '', texto, flags=re.I)  # mostra o conteudo que o site guardava para quem nao tem JS
 
             def local(v):
                 """caminho local do link; o que nao foi baixado vai para nao_baixado.html (nunca abre a internet)"""
@@ -679,6 +691,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     partes.append(' '.join(d))
                 return m.group(0).replace(m.group(1), ', '.join(partes))
             novo = re.sub(r'<base\b[^>]*>', '', SRCSET.sub(troca_set, ATTR.sub(troca, PRECONEXAO.sub('', texto))), flags=re.I)  # links ja viraram caminhos locais
+            if leitura and pagina_html:  # tira os scripts (anuncio, anti-adblock, pop-ups): wiki e so texto e imagem
+                novo = re.sub(r'<script\b[^>]*>.*?</script>', '', novo, flags=re.I | re.S)
+                novo = re.sub(r'<script\b[^>]*>', '', novo, flags=re.I)
             if not dest.lower().endswith('.css'):
                 novo = re.sub(r'''\s(?:integrity|nonce)\s*=\s*("[^"]*"|'[^']*')''', '', novo, flags=re.I)  # o arquivo local mudou: a assinatura original bloquearia ele
                 novo, n = re.subn(r'<head\b[^>]*>', lambda h: h.group(0) + TRAVA, novo, count=1, flags=re.I)
@@ -712,7 +727,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
 PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
-              sitemap=True, form=False, atualizar=False, separados=False, so_coladas=False, desmarcados=[], filtros='', extras='')
+              sitemap=True, form=False, atualizar=False, separados=False, so_coladas=False, leitura=False, desmarcados=[], filtros='', extras='')
 
 
 def ler(arquivo):
@@ -741,7 +756,7 @@ def argumentos(cfg):
         limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
         profundidade=0 if c['so_coladas'] else int(c['prof']), sitemap=c['sitemap'] and not c['so_coladas'],
-        formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], outros='Outros formatos' not in c['desmarcados'],
+        formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], leitura=c['leitura'], outros='Outros formatos' not in c['desmarcados'],
         ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
         | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
         extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
@@ -910,17 +925,19 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados', 'so_coladas')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados', 'so_coladas', 'leitura')}
     var['form'].set(False)
     var['atualizar'].set(False)
     var['separados'].set(False)
     var['so_coladas'].set(False)
+    var['leitura'].set(False)
     for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('fora', 'Arquivos da página mesmo de outro site (ícones, fontes, CDN)'),
                                 ('rew', 'Reescrever links (abrir offline)'),
                                 ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'),
                                 ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'),
                                 ('separados', 'Cada site numa cópia separada (todos ao mesmo tempo)'),
-                                ('so_coladas', 'Só as páginas coladas (não seguir links; p/ atualizar/achar um arquivo)'))):
+                                ('so_coladas', 'Só as páginas coladas (não seguir links; p/ atualizar/achar um arquivo)'),
+                                ('leitura', 'Modo leitura (remove anúncios e scripts; ideal p/ wikis)'))):
         ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
 
     # aba Tipos de arquivo

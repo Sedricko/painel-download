@@ -279,3 +279,39 @@ alvos_n, kw_n = p.argumentos({'enderecos': 'https://site.com/pagina', 'pasta': '
 assert kw_n['profundidade'] == 5 and kw_n['sitemap'] is True, 'sem a opcao, usa a profundidade normal'
 assert kw_sc['recursos_fora'] is True, 'arquivos de fora continuam vindo (hospedados fora do site)'
 print('TESTE SO COLADAS OK')
+
+# --- Modo leitura: remove scripts (anti-adblock/anuncio) e mostra imagem preguicosa ---
+tmpl = tempfile.mkdtemp()
+site_l = os.path.join(tmpl, 'espelho', 's.com')
+os.makedirs(site_l)
+open(os.path.join(site_l, 'logo.png'), 'wb').write(b'PNG')
+pag = '''<html><head><script src="antiadblock.js"></script></head><body>
+<img src="data:image/gif;base64,R0lGOD" data-src="logo.png"><p>conteudo do wiki</p>
+<script>alert("please allow ads")</script></body></html>'''
+dest_l = os.path.join(site_l, 'index.html')
+open(dest_l, 'w', encoding='utf-8').write(pag)
+import json as _json
+_json.dump({'http://s.com/': {'dest': os.path.join('s.com', 'index.html')}, 'http://s.com/logo.png': {'dest': os.path.join('s.com', 'logo.png')}},
+           open(os.path.join(tmpl, 'espelho', '.painel', 'estado.json') if os.path.isdir(os.path.join(tmpl, 'espelho', '.painel')) else os.path.join(site_l, 'x'), 'w')) if False else None
+# reescreve direto, com os dois arquivos ja no mapa
+mp = {'http://s.com/': dest_l, 'http://s.com/logo.png': os.path.join(site_l, 'logo.png')}
+# chama espelhar em cima do que ja existe: so_coladas + leitura, sem baixar (ja tem)
+log_l = []
+class SL(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(pag.encode()); return
+        if self.path == '/logo.png':
+            self.send_response(200); self.end_headers(); self.wfile.write(b'PNG'); return
+        self.send_response(404); self.end_headers()
+srv_l = http.server.ThreadingHTTPServer(('127.0.0.1', 0), SL); pl = srv_l.server_address[1]
+threading.Thread(target=srv_l.serve_forever, daemon=True).start()
+raizl = os.path.join(tempfile.mkdtemp(), 'espelho')
+p.espelhar([f'http://127.0.0.1:{pl}/'], raizl, log_l.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False, leitura=True)
+pagina = open(os.path.join(raizl, f'127.0.0.1_{pl}', 'index.html'), encoding='utf-8').read()
+assert '<script' not in pagina.lower(), 'modo leitura tira os scripts'
+assert 'allow ads' not in pagina, 'tira o pop-up de anti-adblock'
+assert 'src="logo.png"' in pagina or 'src=logo.png' in pagina, 'imagem preguicosa aparece (data-src vira src)'
+assert 'conteudo do wiki' in pagina, 'o conteudo continua la'
+print('TESTE MODO LEITURA OK')
