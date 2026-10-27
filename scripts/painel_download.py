@@ -82,7 +82,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 61  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 62  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -733,6 +733,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 if alvo in mapa:
                     return urllib.parse.quote(os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/')) + ('#' + frag if frag else '')  # % e espaco no nome
                 if alvo.startswith('http'):
+                    cheio = re.match(r'(.*/revision/latest)(?:/.*)?$', alvo)  # Fandom: faltou o thumbnail? usa o full-size (mesma imagem) que ja esta na pasta
+                    if cheio and cheio.group(1) != alvo and cheio.group(1) in mapa:
+                        return urllib.parse.quote(os.path.relpath(mapa[cheio.group(1)], os.path.dirname(dest)).replace(os.sep, '/'))
                     nao_copiados[alvo] = None
                     return urllib.parse.quote(os.path.relpath(fora, os.path.dirname(dest)).replace(os.sep, '/')) + '#' + urllib.parse.quote(alvo, safe='')
                 return v  # data:, mailto:, javascript:

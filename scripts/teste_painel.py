@@ -407,3 +407,27 @@ p.time.sleep = _sleep
 assert any('excesso de pedidos' in m for m in lt), 'avisa que vai tentar de novo os estrangulados'
 assert os.path.exists(os.path.join(raizt, f'127.0.0.1_{pt}', 'foto.jpg')), 'a imagem 403 foi baixada na repeticao'
 print('TESTE ESTRANGULADO OK')
+
+# --- thumbnail da Fandom faltou (403), mas o full-size baixou: pagina usa o full-size local ---
+class FB(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        p0 = self.path.split('?')[0]
+        if p0 == '/':
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers()
+            self.wfile.write(b'<a href="/i/CMP.jpg/revision/latest">full</a><img src="/i/CMP.jpg/revision/latest/scale-to-width-down/850">'); return
+        if p0 == '/i/CMP.jpg/revision/latest':  # full-size: ok
+            self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.end_headers(); self.wfile.write(b'JPEGFULL'); return
+        self.send_response(403); self.end_headers()  # qualquer thumbnail: estrangulado
+srv_fb = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FB); pfb = srv_fb.server_address[1]
+threading.Thread(target=srv_fb.serve_forever, daemon=True).start()
+raizfb = os.path.join(tempfile.mkdtemp(), 'espelho')
+lfb = []; _sl = p.time.sleep; p.time.sleep = lambda *a: None
+p.espelhar([f'http://127.0.0.1:{pfb}/'], raizfb, lfb.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False)
+p.time.sleep = _sl
+pag = open(os.path.join(raizfb, f'127.0.0.1_{pfb}', 'index.html'), encoding='utf-8').read()
+import re as _re
+src = _re.search(r'<img[^>]*\bsrc=["\']([^"\']+)', pag).group(1)
+assert 'nao_baixado' not in src, 'o thumbnail que faltou NAO manda a imagem para nao_baixado'
+assert src.endswith('revision/latest.jpg') or 'revision/latest.jpg' in src, f'usa o full-size local em vez do thumbnail: {src}'
+print('TESTE FALLBACK FULLSIZE OK')
