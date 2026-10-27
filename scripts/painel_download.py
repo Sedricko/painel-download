@@ -82,7 +82,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 62  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 63  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -788,7 +788,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
-PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
+PADRAO = dict(enderecos='', pasta='', prof=3, lim=6000, mb=5000, con=2, pausa=1.0, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
               sitemap=True, form=False, atualizar=False, separados=False, so_coladas=False, leitura=False, so_faltou=False, desmarcados=[], filtros='', extras='')
 
 
@@ -978,8 +978,8 @@ def main():
     linha = ttk.Frame(geral, style='Cartao.TFrame')
     linha.pack(anchor='w')
     campos = {}
-    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Arquivos máx.', 'lim', 200, 50), ('MB por arquivo', 'mb', 500, 50),
-                                                      ('Conexões', 'con', 4, 1), ('Pausa (s)', 'pausa', 0.3, 0.1))):
+    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Arquivos máx.', 'lim', 6000, 50), ('MB por arquivo', 'mb', 5000, 50),
+                                                      ('Conexões', 'con', 2, 1), ('Pausa (s)', 'pausa', 1.0, 0.1))):
         ttk.Label(linha, text=nome, style='Dica.TLabel').grid(row=0, column=i, sticky='w', padx=(0, 16))
         campos[chave] = ttk.Spinbox(linha, from_=0, to=99999, increment=passo, width=9)
         campos[chave].set(padrao)
