@@ -80,7 +80,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 50  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 51  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -322,7 +322,7 @@ BAT_COMPLETO = (  # servidor local (sem internet): com ele funcionam sites React
     'w.open(\'http://127.0.0.1:%%d/index.html\' %% s.server_address[1]); s.serve_forever()"\r\n')
 
 
-def gerar_indice(raiz, inicio, origem, nao_copiados=None):
+def gerar_indice(raiz, inicio, origem, nao_copiados=None, origem_link=None):
     """espelho/index.html (o site em tela cheia), espelho/mapa.html (esqueleto) e, na pasta escolhida,
     os atalhos 'Abrir site.html', 'Esqueleto do site.html' e 'Abrir site completo.bat'"""
     esc, arvore, grupo_de = htmllib.escape, {}, {e: g for g, es in GRUPOS.items() for e in es}
@@ -356,12 +356,14 @@ def gerar_indice(raiz, inicio, origem, nao_copiados=None):
         return ''.join(partes)
 
     tem_inicio = inicio and os.path.exists(inicio)
-    nao_copiados = nao_copiados or {}
+    nao_copiados, origem_link = nao_copiados or {}, origem_link or {}
     if nao_copiados:  # o que ficou de fora, com o link direto para inspecionar no site ao vivo
         contagem['Não copiados'] = len(nao_copiados)
         nao_html = (f'<details class="nao"><summary>Não copiados <small>{len(nao_copiados)} &middot; o link abre o site ao vivo</small></summary><ul>'
-                    + ''.join(f'<li data-b="{esc((u + " " + m).lower())}" data-g="Não copiados"><a href="{esc(u)}" target="_blank" rel="noopener noreferrer">'
-                              f'{esc(u)} &#8599;</a> <small>{esc(m)}</small></li>' for u, m in sorted(nao_copiados.items(), key=lambda x: (x[1], x[0])))
+                    + ''.join(f'<li data-b="{esc((u + " " + m + " " + (origem_link.get(u) or "")).lower())}" data-g="Não copiados">'
+                              f'<a href="{esc(u)}" target="_blank" rel="noopener noreferrer">{esc(u)} &#8599;</a> <small>{esc(m)}'
+                              + (f' &middot; achado em: <a href="{esc(origem_link[u])}" target="_blank" rel="noopener noreferrer">{esc(origem_link[u])}</a>' if origem_link.get(u) else '')
+                              + '</small></li>' for u, m in sorted(nao_copiados.items(), key=lambda x: (x[1], x[0])))
                     + '</ul></details>')
     chips = ''.join(f'<button class="chip" data-g="{esc(g)}">{esc(g)} {n}</button>' for g, n in sorted(contagem.items(), key=lambda x: -x[1]))
     open(os.path.join(raiz, 'mapa.html'), 'w', encoding='utf-8').write(
@@ -414,7 +416,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     mais = [f[1:].strip() for f in filtros.splitlines() if f.startswith('+')]
     menos = [f[1:].strip() for f in filtros.splitlines() if f.startswith('-')]
     rp, lock, ultimo = {}, threading.Lock(), {}  # ultimo pedido de cada site: a pausa vale por site
-    feitos, mapa, baixados = set(urls), {}, [0]
+    feitos, mapa, baixados, origem_link = set(urls), {}, [0], {}  # origem_link: 1a pagina onde cada link apareceu
 
     def porque(u):
         """'' se pode baixar; senao o motivo (aparece no esqueleto, em 'Nao copiados')"""
@@ -599,6 +601,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if html:
                 with lock:
                     pai.setdefault(v, set()).add(base)
+                    origem_link.setdefault(v, u)
             eh_pagina = extensao(v) in GRUPOS['Páginas'] and not DIRETO.match(v)  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
@@ -683,7 +686,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if novo != open(dest, encoding='utf-8', errors='replace').read():
                 open(dest, 'w', encoding='utf-8').write(novo)
     json.dump(estado, open(os.path.join(painel, 'estado.json'), 'w', encoding='utf-8'))
-    open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(''.join(f'{u}  ({c})\n' for u, c in falhas.items()))
+    open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(
+        ''.join(f'{u}  ({c})' + (f'  [achado em: {origem_link[u]}]' if origem_link.get(u) else '') + '\n' for u, c in falhas.items()))
     if falhas:
         log(f'aviso: {len(falhas)} nao baixaram (lista em {os.path.join(painel, "falhas.txt")})')
     entradas_bloqueadas = [u for u in urls if u in falhas and isinstance(falhas[u], int) and falhas[u] in (403, 401, 429)]
@@ -695,7 +699,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     for u in set(falhas) | set(nao_copiados):
         motivos[u] = (f'erro {falhas[u]}' if isinstance(falhas[u], int) else 'erro de rede') if u in falhas else \
             porque(u) or 'fora do limite (profundidade ou Arquivos máx.)'
-    gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()}, motivos)
+    gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()}, motivos, origem_link)
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:
             for d, ds, fs in os.walk(raiz):
@@ -708,7 +712,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
 
 # opcoes da janela; e o que vai num perfil (cookies nunca sao salvos)
 PADRAO = dict(enderecos='', pasta='', prof=3, lim=200, mb=500, con=4, pausa=0.3, mesmo=True, fora=True, lixo=True, robots=True, rew=True, zip=True,
-              sitemap=True, form=False, atualizar=False, separados=False, desmarcados=[], filtros='', extras='')
+              sitemap=True, form=False, atualizar=False, separados=False, so_coladas=False, desmarcados=[], filtros='', extras='')
 
 
 def ler(arquivo):
@@ -734,9 +738,10 @@ def argumentos(cfg):
     urls = [u.strip() for u in c['enderecos'].splitlines() if u.strip().startswith('http')]
     sem_formato = ler(LISTA_FORMATOS)
     return separar(urls, c['pasta'], c['separados']), dict(
-        profundidade=int(c['prof']), limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
+        limite=int(c['lim']), mesmo_site=c['mesmo'], filtros=c['filtros'], max_mb=int(c['mb']),
         conexoes=int(c['con']), pausa=float(c['pausa']), robots=c['robots'], reescrever=c['rew'], gerar_zip=c['zip'],
-        sitemap=c['sitemap'], formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], outros='Outros formatos' not in c['desmarcados'],
+        profundidade=0 if c['so_coladas'] else int(c['prof']), sitemap=c['sitemap'] and not c['so_coladas'],
+        formularios=c['form'], atualizar=c['atualizar'], recursos_fora=c['fora'], outros='Outros formatos' not in c['desmarcados'],
         ext_excluidas={e for n in c['desmarcados'] if n in GRUPOS for e in GRUPOS[n]}
         | {x.lower().lstrip('*.') for x in re.split(r'[\s,;]+', sem_formato) if x.strip('*.')},
         extras=[x for x in re.split(r'[\s,;]+', c['extras']) if x],
@@ -905,15 +910,17 @@ def main():
     rotulo(geral, 'Opções')
     opcoes = ttk.Frame(geral, style='Cartao.TFrame')
     opcoes.pack(anchor='w')
-    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados')}
+    var = {k: tk.BooleanVar(value=True) for k in ('mesmo', 'fora', 'lixo', 'robots', 'rew', 'zip', 'sitemap', 'form', 'atualizar', 'separados', 'so_coladas')}
     var['form'].set(False)
     var['atualizar'].set(False)
     var['separados'].set(False)
+    var['so_coladas'].set(False)
     for i, (k, t) in enumerate((('mesmo', 'Só o mesmo site (desmarque p/ seguir links de outros sites)'), ('fora', 'Arquivos da página mesmo de outro site (ícones, fontes, CDN)'),
                                 ('rew', 'Reescrever links (abrir offline)'),
                                 ('robots', 'Respeitar robots.txt'), ('zip', 'Gerar .zip no fim'), ('sitemap', 'Ler sitemap.xml'),
                                 ('atualizar', 'Atualizar: baixar de novo só o que mudou no site'),
-                                ('separados', 'Cada site numa cópia separada (todos ao mesmo tempo)'))):
+                                ('separados', 'Cada site numa cópia separada (todos ao mesmo tempo)'),
+                                ('so_coladas', 'Só as páginas coladas (não seguir links; p/ atualizar/achar um arquivo)'))):
         ttk.Checkbutton(opcoes, text=t, variable=var[k], style='Cartao.TCheckbutton').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
 
     # aba Tipos de arquivo

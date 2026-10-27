@@ -105,6 +105,7 @@ assert not os.path.exists(os.path.join(site, 'privado')), 'robots.txt respeitado
 assert os.path.exists(os.path.join(site, 'robots.txt')) and os.path.exists(os.path.join(site, 'sitemap.xml')), 'robots.txt e sitemap.xml salvos na copia'
 assert 'fora.example/pagina' in mapa and 'target="_blank"' in mapa and 'data-g="Não copiados"' in mapa, 'esqueleto lista o que nao foi copiado com link direto'
 assert 'privado/x.html' in mapa and 'proibido pelo robots.txt' in mapa and 'página de outro site' in mapa, 'motivo exato do bloqueio'
+assert 'achado em:' in mapa, 'esqueleto mostra em qual pagina o link nao copiado apareceu'
 assert 'fonts.gstatic.com' not in mapa, 'preconnect nao e link'
 print('TESTE OK')
 
@@ -119,14 +120,14 @@ class H2(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         pedidos.append((self.path, self.headers.get('If-None-Match'), self.headers.get('Range')))
-        if self.path in ('/robots.txt', '/sitemap.xml'):  # este site nao tem: 404 (deve ser silencioso)
+        if self.path in ('/robots.txt', '/sitemap.xml', '/imagem-quebrada.png'):  # 404 (sitemap/robots silenciosos; a imagem entra em falhas)
             self.send_response(404); self.end_headers(); return
         if self.path == '/':
             etag = f'"v{versao[0]}"'
             if self.headers.get('If-None-Match') == etag:
                 self.send_response(304); self.end_headers(); return
             self.send_response(200); self.send_header('ETag', etag); self.send_header('Content-Type', 'text/html'); self.end_headers()
-            self.wfile.write(b'<html><a href="/download.php?id=3">z</a><a href="/api.php">j</a><a href="/conta/logout">sair</a>'
+            self.wfile.write(b'<html><img src="/imagem-quebrada.png"><a href="/download.php?id=3">z</a><a href="/api.php">j</a><a href="/conta/logout">sair</a>'
                              b'<a href="/big.bin">b</a><a href="/instavel.txt">i</a><a href="/novo%d.txt">n</a></html>' % versao[0])
         elif self.path == '/download.php?id=3':
             self.send_response(200); self.send_header('Content-Disposition', 'attachment; filename="pacote.zip"'); self.end_headers()
@@ -163,11 +164,12 @@ assert os.path.exists(os.path.join(site2, 'api.php.json')), 'tipo real pelo Cont
 assert open(os.path.join(site2, 'big.bin'), 'rb').read() == CHEIO and ('/big.bin', None, 'bytes=10000-') in pedidos, 'continua o .part'
 assert open(os.path.join(site2, 'instavel.txt')).read() == 'agora foi', 'tenta de novo o que falhou'
 assert not any('logout' in x[0] for x in pedidos), 'nunca abre logout'
-assert open(os.path.join(raiz2, '.painel', 'falhas.txt')).read() == '', 'sem falhas no fim'
+ftxt = open(os.path.join(raiz2, '.painel', 'falhas.txt')).read()
+assert 'imagem-quebrada.png' in ftxt and 'achado em:' in ftxt, 'falhas.txt mostra a pagina de origem do arquivo que faltou'
 # rodar de novo (sem atualizar): nada novo e nenhum pedido de lixo vindo das paginas ja reescritas
 del pedidos[:]; del log2[:]
 rodar()
-assert [x[0] for x in pedidos if x[0] not in ('/robots.txt', '/sitemap.xml')] == [], pedidos  # meta sem 404-cache: re-pedido ok
+assert [x[0] for x in pedidos if x[0] not in ('/robots.txt', '/sitemap.xml', '/imagem-quebrada.png')] == [], pedidos  # meta sem 404-cache: re-pedido ok
 # atualizar: pagina nao mudou -> 304; depois muda -> baixa de novo e acha o arquivo novo
 rodar(atualizar=True)
 assert ('/', '"v1"', None) in pedidos and not os.path.exists(os.path.join(site2, 'novo2.txt')), 'atualizar usa ETag'
@@ -269,3 +271,11 @@ p.espelhar([f'http://127.0.0.1:{p3}/'], raiz3, msgs.append, threading.Event(), r
 assert any('entrada foi bloqueada' in m and 'segui pelo sitemap' in m for m in msgs), ['SEM AVISO'] + [m for m in msgs if 'aviso' in m]
 assert os.path.exists(os.path.join(raiz3, f'127.0.0.1_{p3}', 'pagina-interna.html')), 'pegou a pagina interna pelo sitemap mesmo com a entrada bloqueada'
 print('TESTE AVISO ENTRADA OK')
+
+# --- "so as paginas coladas": profundidade 0 (nao segue links de pagina), mas traz arquivos ate de outro site ---
+alvos_sc, kw_sc = p.argumentos({'enderecos': 'https://site.com/pagina', 'pasta': '/p', 'so_coladas': True, 'prof': 5, 'sitemap': True})
+assert kw_sc['profundidade'] == 0 and kw_sc['sitemap'] is False, 'so_coladas forca profundidade 0 e sem sitemap'
+alvos_n, kw_n = p.argumentos({'enderecos': 'https://site.com/pagina', 'pasta': '/p', 'so_coladas': False, 'prof': 5, 'sitemap': True})
+assert kw_n['profundidade'] == 5 and kw_n['sitemap'] is True, 'sem a opcao, usa a profundidade normal'
+assert kw_sc['recursos_fora'] is True, 'arquivos de fora continuam vindo (hospedados fora do site)'
+print('TESTE SO COLADAS OK')
