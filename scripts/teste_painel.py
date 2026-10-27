@@ -56,7 +56,7 @@ assert open(os.path.join(site, 'script.lua')).read() == 'print("oi")', 'botao de
 assert os.path.exists(os.path.join(site, 'escondida.html')), 'sitemap'
 assert os.path.exists(os.path.join(site, 'sub', 'app.js')), '<base href>'
 assert '<base' not in open(os.path.join(site, 'ferramenta.html')).read(), 'base removido no espelho'
-assert [f for f in os.listdir(os.path.join(site, 'bin')) if f.endswith('.dll')] and not os.path.exists(os.path.join(site, 'bin', 'tool.dll')), 'dll por endereco completo, com ?v=1, sem duplicar'
+assert os.listdir(os.path.join(site, 'bin')) == ['tool.dll'], 'dll por endereco completo; ?v=1 nao duplica'
 assert os.path.exists(os.path.join(site, 's', 'x.ps1')), 'qualquer formato por endereco completo'
 assert open(os.path.join(site, 'vip.html')).read().endswith('<html>area vip</html>'), 'area vip com cookie de login'
 for c in ('sub/scripts/main.lua', 'cfg/jogo.json', 'x/item.ini', 'pacotes/mod.pak', 'escondido/velho.dll', 'v/p0.ts', 'cfg/deploy/Dockerfile', '.htaccess'):
@@ -82,3 +82,70 @@ assert not [f for f in os.listdir(site0) if f.startswith('js_pagina')], 'pagina 
 assert not [d for d in os.listdir(raiz0) if 'facebook' in d or d.startswith('x.com')], 'rede social bloqueada'
 assert not [m for m in log0 if 'facebook' in m or '//x.com' in m or 'naoquero' in m], log0
 print('TESTE OK')
+
+# --- download: nome real, tipo, logout, continuar .part, repetir falhas, atualizar ---
+pedidos, versao, instavel = [], [1], [0]
+CHEIO = bytes(range(256)) * 400
+
+
+class H2(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        pedidos.append((self.path, self.headers.get('If-None-Match'), self.headers.get('Range')))
+        if self.path == '/':
+            etag = f'"v{versao[0]}"'
+            if self.headers.get('If-None-Match') == etag:
+                self.send_response(304); self.end_headers(); return
+            self.send_response(200); self.send_header('ETag', etag); self.send_header('Content-Type', 'text/html'); self.end_headers()
+            self.wfile.write(b'<html><a href="/download.php?id=3">z</a><a href="/api.php">j</a><a href="/conta/logout">sair</a>'
+                             b'<a href="/big.bin">b</a><a href="/instavel.txt">i</a><a href="/novo%d.txt">n</a></html>' % versao[0])
+        elif self.path == '/download.php?id=3':
+            self.send_response(200); self.send_header('Content-Disposition', 'attachment; filename="pacote.zip"'); self.end_headers()
+            self.wfile.write(b'PK zip')
+        elif self.path == '/api.php':
+            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
+            self.wfile.write(b'{"a": 1}')
+        elif self.path == '/big.bin':
+            ini = int(re.search(r'\d+', self.headers.get('Range') or '0').group())
+            self.send_response(206 if ini else 200); self.send_header('Content-Length', str(len(CHEIO) - ini)); self.end_headers()
+            self.wfile.write(CHEIO[ini:])
+        elif self.path == '/instavel.txt':
+            instavel[0] += 1
+            self.send_response(500 if instavel[0] <= 3 else 200); self.end_headers()
+            self.wfile.write(b'' if instavel[0] <= 3 else b'agora foi')
+        elif self.path.startswith('/novo'):
+            self.send_response(200); self.end_headers(); self.wfile.write(b'novo')
+        else:
+            raise AssertionError('nao podia pedir ' + self.path)
+
+
+import re
+srv2 = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H2)
+p2 = srv2.server_address[1]
+threading.Thread(target=srv2.serve_forever, daemon=True).start()
+raiz2, log2 = os.path.join(tempfile.mkdtemp(), 'espelho'), []
+site2 = os.path.join(raiz2, f'127.0.0.1_{p2}')
+os.makedirs(site2)
+open(os.path.join(site2, 'big.bin.part'), 'wb').write(CHEIO[:10000])  # download cortado no meio
+rodar = lambda **k: p.espelhar([f'http://127.0.0.1:{p2}/'], raiz2, log2.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False, **k)
+rodar()
+assert open(os.path.join(site2, 'pacote.zip'), 'rb').read() == b'PK zip', 'nome real pelo Content-Disposition'
+assert os.path.exists(os.path.join(site2, 'api.php.json')), 'tipo real pelo Content-Type'
+assert open(os.path.join(site2, 'big.bin'), 'rb').read() == CHEIO and ('/big.bin', None, 'bytes=10000-') in pedidos, 'continua o .part'
+assert open(os.path.join(site2, 'instavel.txt')).read() == 'agora foi', 'tenta de novo o que falhou'
+assert not any('logout' in x[0] for x in pedidos), 'nunca abre logout'
+assert open(os.path.join(raiz2, '.painel', 'falhas.txt')).read() == '', 'sem falhas no fim'
+# rodar de novo (sem atualizar): nada novo e nenhum pedido de lixo vindo das paginas ja reescritas
+del pedidos[:]; del log2[:]
+rodar()
+assert [x[0] for x in pedidos] == [], pedidos
+# atualizar: pagina nao mudou -> 304; depois muda -> baixa de novo e acha o arquivo novo
+rodar(atualizar=True)
+assert ('/', '"v1"', None) in pedidos and not os.path.exists(os.path.join(site2, 'novo2.txt')), 'atualizar usa ETag'
+versao[0] = 2
+rodar(atualizar=True)
+assert os.path.exists(os.path.join(site2, 'novo2.txt')), 'atualizar baixa o que mudou'
+assert 'nao_baixado' not in ''.join(x[0] for x in pedidos), 'nao segue links reescritos'
+print('TESTE DOWNLOAD OK')

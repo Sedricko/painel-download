@@ -7,7 +7,7 @@
 - retoma: arquivo ja baixado nao baixa de novo; respeita robots.txt (desligavel); ignora anuncios e redes sociais
 Le sitemap.xml. Segue href/src/srcset/data-*/css url()/@import/meta refresh/sourcemap, playlists .m3u8 e, dentro de html/js/json/lua/etc.,
 enderecos completos e caminhos entre aspas com extensao conhecida ("scripts/main.lua", JSON com \\/). Nao adivinha enderecos."""
-import fnmatch, hashlib, html as htmllib, http.cookiejar, os, re, threading, time, tkinter as tk, urllib.parse, urllib.request, urllib.robotparser, zipfile
+import fnmatch, hashlib, html as htmllib, http.cookiejar, json, mimetypes, os, re, threading, time, tkinter as tk, urllib.error, urllib.parse, urllib.request, urllib.robotparser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, scrolledtext, ttk
 
@@ -101,6 +101,24 @@ def formularios_de_download(texto, base):
     return out
 
 
+def nome_do_cabecalho(headers):
+    """nome do arquivo que o servidor manda em Content-Disposition (ou '')"""
+    m = re.search(r'''filename\*?=(?:UTF-8'')?["']?([^"';]+)''', headers.get('Content-Disposition') or '', re.I)
+    return re.sub(r'[<>:"/|?*\\]', '_', os.path.basename(urllib.parse.unquote(m.group(1)).strip())) if m else ''
+
+
+VERSAO = {'v', 'ver', 'version', '_', 't', 'ts', 'cb', 'cache', 'rev', 'hash', 'h'}
+PERIGOSOS = re.compile(r'(?i)(?:^|[/?&=_.-])(?:log-?out|sign-?out|log-?off|sair|deslogar|delete|excluir|apagar|remover|unsubscribe)(?:[/?&=_.-]|$)')
+
+
+def normal(u):
+    """app.js?v=3 e app.js?v=4 sao o mesmo arquivo: tira o ?v= (so de arquivo, nunca de pagina)"""
+    p = urllib.parse.urlparse(u)
+    if p.query and extensao(u) not in GRUPOS['Páginas'] and {k for k, _ in urllib.parse.parse_qsl(p.query, True)} <= VERSAO:
+        return u.split('?')[0]
+    return u
+
+
 def extensao(url):
     """'lua' de x/main.lua; tambem 'htaccess' de /.htaccess e 'dockerfile' de /Dockerfile"""
     n = os.path.basename(urllib.parse.urlparse(url).path)
@@ -150,7 +168,7 @@ def links(texto, base, extras=()):
             continue
         u = urllib.parse.urljoin(base, htmllib.unescape(a.strip())).split('#')[0]  # &amp; do html vira &
         if u.startswith('http'):
-            out.append(u)
+            out.append(normal(u))
     return out
 
 
@@ -204,8 +222,16 @@ def gerar_indice(raiz, inicio, origem):
 
 def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True, filtros='', max_mb=500,
              conexoes=4, pausa=0.3, robots=True, reescrever=True, gerar_zip=True, ext_excluidas=(), outros=True, extras=(),
-             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS):
+             sitemap=True, formularios=False, cookies=None, bloquear=BLOQUEADOS, atualizar=False):
     os.makedirs(raiz, exist_ok=True)
+    painel = os.path.join(raiz, '.painel')  # estado do espelho: o que ja baixou (para atualizar) e as paginas originais
+    os.makedirs(painel, exist_ok=True)
+    try:
+        estado = json.load(open(os.path.join(painel, 'estado.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        estado = {}
+    original = lambda dest: os.path.join(painel, 'orig', os.path.relpath(dest, raiz))
+    frescos, falhas = set(), {}
     cookies = cookies or {}
     bloquear = {re.sub(r'^(https?://)?(www\.)?', '', b.strip().lower()).split('/')[0] for b in bloquear if b.strip()}
     dominios = {urllib.parse.urlparse(u).netloc for u in urls}
@@ -226,7 +252,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     filtros = '\n'.join(('+*' + f.strip() if f.strip().startswith('.') else f) for f in filtros.splitlines())  # '.lua' means +*.lua
     mais = [f[1:].strip() for f in filtros.splitlines() if f.startswith('+')]
     menos = [f[1:].strip() for f in filtros.splitlines() if f.startswith('-')]
-    rp, lock, ultimo = {}, threading.Lock(), [0.0]
+    rp, lock, ultimo = {}, threading.Lock(), {}  # ultimo pedido de cada site: a pausa vale por site
     feitos, mapa, baixados = set(urls), {}, [0]
 
     def permitido(u):
@@ -237,6 +263,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if urllib.parse.urlparse(u).netloc not in dominios and any(h == d or h.endswith('.' + d) for d in bloquear):
             return False
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
+            return False
+        p = urllib.parse.urlparse(u)
+        if e in GRUPOS['Páginas'] and PERIGOSOS.search(p.path + '?' + p.query):  # nunca clica em sair/excluir (derruba o login ou apaga algo)
             return False
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
             return True
@@ -257,40 +286,79 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 return False
         return True
 
+    def nome_real(u, dest, r):
+        """nome pelo servidor: download.php?id=3 que manda um .zip vira arquivo.zip, nao .html"""
+        nome = nome_do_cabecalho(r.headers)
+        tipo = (r.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+        if nome:
+            novo = os.path.join(os.path.dirname(dest), nome)
+            if os.path.exists(novo):  # outro endereco ja usou esse nome
+                b, e = os.path.splitext(nome)
+                novo = os.path.join(os.path.dirname(dest), b + '_' + hashlib.md5(u.encode()).hexdigest()[:6] + e)
+            return novo
+        if extensao(u) in GRUPOS['Páginas'] and tipo and 'html' not in tipo and dest.endswith('.html'):
+            return dest[:-5] + (mimetypes.guess_extension(tipo) or '.bin')
+        return dest
+
     def pegar(u):
-        """(texto ou None, caminho) -- baixa em pedacos, retoma se o arquivo ja existe"""
-        dest = caminho_local(raiz, u)
-        if os.path.exists(dest):
+        """(caminho, ja_tinha) -- baixa em pedacos; continua um .part cortado; no modo atualizar so baixa o que mudou"""
+        info = estado.get(u, {})
+        dest = os.path.join(raiz, info['dest']) if info.get('dest') else caminho_local(raiz, u)
+        if os.path.exists(dest) and not atualizar:
             return dest, True
         os.makedirs(os.path.dirname(dest), exist_ok=True)
+        site, part = urllib.parse.urlparse(u).netloc, dest + '.part'
         for tentativa in range(3):
             if parar.is_set():
                 return None, False
             with lock:
-                espera = ultimo[0] + pausa - time.time()
-                ultimo[0] = max(time.time(), ultimo[0]) + (pausa if espera > 0 else 0)
+                espera = ultimo.get(site, 0.0) + pausa - time.time()
+                ultimo[site] = max(time.time(), ultimo.get(site, 0.0)) + (pausa if espera > 0 else 0)
             if espera > 0:
                 time.sleep(espera)
+            extra, ja_part = {}, os.path.getsize(part) if os.path.exists(part) else 0
+            if ja_part:
+                extra['Range'] = f'bytes={ja_part}-'
+            if os.path.exists(dest):  # modo atualizar: o servidor responde 304 se nao mudou
+                extra.update({k: info[c] for k, c in (('If-None-Match', 'etag'), ('If-Modified-Since', 'lm')) if info.get(c)})
             try:
-                r = NAVEGADOR.open(urllib.request.Request(u, headers=cab(u)), timeout=30)
-                if int(r.headers.get('Content-Length') or 0) > max_mb << 20:
+                r = NAVEGADOR.open(urllib.request.Request(u, headers=cab(u, extra)), timeout=30)
+                continua = r.status == 206
+                total = ja_part if continua else 0
+                if int(r.headers.get('Content-Length') or 0) + total > max_mb << 20:
                     log(f'pulei {u}: maior que {max_mb} MB')
                     return None, False
-                total = 0
-                with open(dest + '.part', 'wb') as f:
+                if continua:
+                    log(f'continuando {u} de {ja_part >> 10} KB')
+                with open(part, 'ab' if continua else 'wb') as f:
                     while chunk := r.read(1 << 20):
                         total += len(chunk)
                         if total > max_mb << 20:
                             log(f'cortei {u} em {max_mb} MB')
                             break
                         f.write(chunk)
-                os.replace(dest + '.part', dest)
-                return dest, False
-            except Exception as e:
-                if tentativa == 2 or '404' in str(e) or '403' in str(e):
+                final = dest if info.get('dest') else nome_real(u, dest, r)
+                os.replace(part, final)
+                with lock:
+                    estado[u] = {'dest': os.path.relpath(final, raiz), 'etag': r.headers.get('ETag'), 'lm': r.headers.get('Last-Modified')}
+                    frescos.add(final)
+                return final, False
+            except urllib.error.HTTPError as e:
+                if e.code == 304:
+                    return dest, True
+                if e.code == 416:  # o .part ja estava completo ou mudou: recomeca
+                    os.remove(part)
+                    continue
+                if tentativa == 2 or e.code in (403, 404, 410):
                     log(f'falhou {u}: {e}')
+                    falhas[u] = e.code
                     return None, False
-                time.sleep(1 + tentativa)
+            except Exception as e:
+                if tentativa == 2:
+                    log(f'falhou {u}: {e}')
+                    falhas[u] = str(e)
+                    return None, False
+            time.sleep(1 + tentativa)
         return None, False
 
     def enviar_formularios(u):
@@ -307,10 +375,9 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             try:
                 r = NAVEGADOR.open(urllib.request.Request(acao, data=urllib.parse.urlencode(dados).encode(),
                                                           headers=cab(acao, {'Referer': u})), timeout=30)
-                nome = re.search(r'''filename\*?=(?:UTF-8'')?["']?([^"';]+)''', r.headers.get('Content-Disposition') or '', re.I)
+                nome = nome_do_cabecalho(r.headers)
                 if not nome:
                     continue  # nao era download (pagina comum)
-                nome = re.sub(r'[<>:"/|?*\\]', '_', os.path.basename(urllib.parse.unquote(nome.group(1)).strip()))
                 dest = os.path.join(os.path.dirname(caminho_local(raiz, u)), nome)
                 dados_arq = r.read((max_mb << 20) + 1)
                 if len(dados_arq) > max_mb << 20:
@@ -337,8 +404,8 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         log(f'{"(ja tinha) " if ja else ""}ok ({n}) {u}')
         if extensao(dest.replace(os.sep, '/')) not in LER or os.path.getsize(dest) > 20 << 20:  # shortcut: nao procura links em texto > 20 MB
             return []
-        try:
-            texto = open(dest, encoding='utf-8', errors='replace').read()
+        try:  # pagina que ja tinha foi reescrita para offline: os links certos estao na copia original
+            texto = open(original(dest) if ja and os.path.exists(original(dest)) else dest, encoding='utf-8', errors='replace').read()
         except OSError:
             return []
         html = dest.lower().endswith(('.html', '.htm'))
@@ -370,19 +437,33 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                     if permitido(v):
                         prox.append((v, p))
             nivel = prox
+        repetir = [(u, profundidade) for u, c in falhas.items() if c not in (403, 404, 410)]  # erro de rede: tenta de novo uma vez
+        if repetir and not parar.is_set():
+            log(f'aviso: tentando de novo {len(repetir)} que falharam...')
+            for u, _ in repetir:
+                del falhas[u]
+            list(pool.map(tratar, repetir))  # shortcut: nao segue links novos de quem so deu certo na repeticao
     if reescrever:
         fora = os.path.join(raiz, 'nao_baixado.html')
         open(fora, 'w', encoding='utf-8').write(NAO_BAIXADO)
         for u, dest in mapa.items():
             if not dest.lower().endswith(('.html', '.htm', '.xhtml', '.css')):
                 continue
-            texto = open(dest, encoding='utf-8', errors='replace').read()
+            if dest in frescos:  # guarda o original antes de reescrever (para atualizar depois)
+                os.makedirs(os.path.dirname(original(dest)), exist_ok=True)
+                texto = open(dest, encoding='utf-8', errors='replace').read()
+                open(original(dest), 'w', encoding='utf-8').write(texto)
+            elif os.path.exists(original(dest)):
+                texto = open(original(dest), encoding='utf-8', errors='replace').read()
+            else:
+                continue  # ja reescrito por uma versao antiga do painel
             b = base_de(texto, u)
 
             def local(v):
                 """caminho local do link; o que nao foi baixado vai para nao_baixado.html (nunca abre a internet)"""
                 alvo = urllib.parse.urljoin(b, htmllib.unescape(v.strip()))
                 alvo, _, frag = alvo.partition('#')
+                alvo = normal(alvo)
                 if alvo in mapa:
                     return os.path.relpath(mapa[alvo], os.path.dirname(dest)).replace(os.sep, '/') + ('#' + frag if frag else '')
                 if alvo.startswith('http'):
@@ -403,12 +484,17 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
                 novo = re.sub(r'''\s(?:integrity|nonce)\s*=\s*("[^"]*"|'[^']*')''', '', novo, flags=re.I)  # o arquivo local mudou: a assinatura original bloquearia ele
                 novo, n = re.subn(r'<head\b[^>]*>', lambda h: h.group(0) + TRAVA, novo, count=1, flags=re.I)
                 novo = novo if n else TRAVA + novo
-            if novo != texto:
+            if novo != open(dest, encoding='utf-8', errors='replace').read():
                 open(dest, 'w', encoding='utf-8').write(novo)
+    json.dump(estado, open(os.path.join(painel, 'estado.json'), 'w', encoding='utf-8'))
+    open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(''.join(f'{u}  ({c})\n' for u, c in falhas.items()))
+    if falhas:
+        log(f'aviso: {len(falhas)} nao baixaram (lista em {os.path.join(painel, "falhas.txt")})')
     gerar_indice(raiz, mapa.get(urls[0]) or caminho_local(raiz, urls[0]), {d: u for u, d in mapa.items()})
     if gerar_zip:
         with zipfile.ZipFile(raiz.rstrip('/\\') + '.zip', 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as z:
-            for d, _, fs in os.walk(raiz):
+            for d, ds, fs in os.walk(raiz):
+                ds[:] = [x for x in ds if x != '.painel']
                 for f in fs:
                     z.write(os.path.join(d, f), os.path.relpath(os.path.join(d, f), raiz))
     log(f'PRONTO: {baixados[0]} arquivos em {raiz}' + (' + .zip' if gerar_zip else '') + (' (parado)' if parar.is_set() else ''))
@@ -490,7 +576,7 @@ def main():
     linha = ttk.Frame(geral, style='Cartao.TFrame')
     linha.pack(anchor='w')
     campos = {}
-    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Páginas máx.', 'lim', 200, 50), ('MB por arquivo', 'mb', 500, 50),
+    for i, (nome, chave, padrao, passo) in enumerate((('Profundidade', 'prof', 3, 1), ('Arquivos máx.', 'lim', 200, 50), ('MB por arquivo', 'mb', 500, 50),
                                                       ('Conexões', 'con', 4, 1), ('Pausa (s)', 'pausa', 0.3, 0.1))):
         ttk.Label(linha, text=nome, style='Dica.TLabel').grid(row=0, column=i, sticky='w', padx=(0, 16))
         campos[chave] = ttk.Spinbox(linha, from_=0, to=99999, increment=passo, width=9)
