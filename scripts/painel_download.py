@@ -107,7 +107,10 @@ def formularios_de_download(texto, base):
         if any(atributo(c, 'type').lower() not in ('hidden', 'submit') for c in campos) or re.search(r'<(textarea|select)\b', corpo, re.I):
             continue
         dados = {atributo(c, 'name'): atributo(c, 'value') for c in campos if atributo(c, 'type').lower() == 'hidden' and atributo(c, 'name')}
-        out.append((urllib.parse.urljoin(base, atributo(attrs, 'action') or base), dados))
+        acao = urllib.parse.urljoin(base, atributo(attrs, 'action') or base)
+        if PERIGOSOS.search(acao) or re.search(r'(?i)log-?in|register|sign-?up|cookie|consent|multimod|vote|rate|report|follow|subscribe|password', acao):
+            continue  # so tem campos escondidos mas nao e download (aceitar cookies, moderar, entrar...)
+        out.append((acao, dados))
     return out
 
 
@@ -121,8 +124,20 @@ VERSAO = {'v', 'ver', 'version', '_', 't', 'ts', 'cb', 'cache', 'rev', 'hash', '
 PERIGOSOS = re.compile(r'(?i)(?:^|[/?&=_.-])(?:log-?out|sign-?out|log-?off|sair|deslogar|delete|excluir|apagar|remover|unsubscribe)(?:[/?&=_.-]|$)')
 
 
+DIRETO = re.compile(r'https://drive\.google\.com/uc\?export=download&id=')  # link de download direto (sem extensao no endereco)
+
+
 def normal(u):
-    """app.js?v=3 e app.js?v=4 sao o mesmo arquivo: tira o ?v= (so de arquivo, nunca de pagina)"""
+    """app.js?v=3 e app.js?v=4 sao o mesmo arquivo: tira o ?v= (so de arquivo, nunca de pagina);
+    pagina de servico de arquivos vira o link direto do arquivo (Google Drive, Dropbox, GitHub)"""
+    m = re.match(r'https?://drive\.google\.com/(?:file/d/([\w-]{20,})|open\?id=([\w-]{20,}))', u)
+    if m:
+        return 'https://drive.google.com/uc?export=download&id=' + (m.group(1) or m.group(2))
+    m = re.match(r'https?://github\.com/([^/]+/[^/]+)/blob/(.+)', u)
+    if m:
+        return f'https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}'
+    if re.match(r'https?://(?:www\.)?dropbox\.com/', u) and 'dl=0' in u:
+        return u.replace('dl=0', 'dl=1')
     p = urllib.parse.urlparse(u)
     if p.query and extensao(u) not in GRUPOS['Páginas'] and {k for k, _ in urllib.parse.parse_qsl(p.query, True)} <= VERSAO:
         return u.split('?')[0]
@@ -347,12 +362,12 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in menos):
             return 'filtro -'
         p = urllib.parse.urlparse(u)
-        if e in GRUPOS['Páginas'] and PERIGOSOS.search(p.path + '?' + p.query):  # nunca clica em sair/excluir (derruba o login ou apaga algo)
+        if e in GRUPOS['Páginas'] and not DIRETO.match(u) and PERIGOSOS.search(p.path + '?' + p.query):  # nunca clica em sair/excluir (derruba o login ou apaga algo)
             return 'link de sair/excluir (nunca abre)'
         if any(fnmatch.fnmatch(u, m) or fnmatch.fnmatch(u.split('//', 1)[-1], m) for m in mais):
             return ''
         if mesmo_site and p.netloc not in dominios and not (
-                recursos_fora and ((e in CONHECIDAS and e not in GRUPOS['Páginas']) or re.search(r'/css2?$', p.path))):  # shortcut: /css e /css2 = Google Fonts sem extensao
+                recursos_fora and ((e in CONHECIDAS and e not in GRUPOS['Páginas']) or re.search(r'/css2?$', p.path) or DIRETO.match(u))):  # shortcut: /css e /css2 = Google Fonts sem extensao
             return 'página de outro site ("Só o mesmo site" marcado)'  # arquivos que a pagina usa (CDN, fontes, icones) vem sempre
         if robots and (e in GRUPOS['Páginas'] or p.netloc in dominios):  # arquivo da pagina vindo de CDN: o navegador tambem nao consulta robots
             h = urllib.parse.urlparse(u)
@@ -519,7 +534,7 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
             if html:
                 with lock:
                     pai.setdefault(v, set()).add(base)
-            eh_pagina = extensao(v) in GRUPOS['Páginas']  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
+            eh_pagina = extensao(v) in GRUPOS['Páginas'] and not DIRETO.match(v)  # so pagina conta profundidade; arquivo de qualquer formato sempre vem
             if eh_pagina and prof >= profundidade:  # vale tambem para pagina citada dentro de .js/.json
                 continue
             novos.append((v, prof + 1 if eh_pagina else prof))

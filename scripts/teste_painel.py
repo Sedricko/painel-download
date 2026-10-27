@@ -204,3 +204,13 @@ el.style.background = "radial-gradient(circle, rgba(3,167,211,0.8) 0%, transpare
 css="body{background:url(img/bg.png)}"; h='<a href="docs/foto (1).png">x</a>'; f=".lua,.txt"; g=Ra("googletag.cmd"); i='<img data-src="false"><img src="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">'; r="@2x.png" '''
 assert sorted(set(p.links(js, 'https://s.com/'))) == ['https://s.com/docs/foto (1).png', 'https://s.com/img/bg.png'], p.links(js, 'https://s.com/')
 print('TESTE FALSOS ENDERECOS OK')
+
+# --- servicos de arquivo viram link direto; formulario escondido que nao e download nao e apertado ---
+assert p.normal('https://drive.google.com/file/d/1Uq0sHSq9uSqtb2mYw35Si9_r20Y_bnzm/view?usp=sharing') == 'https://drive.google.com/uc?export=download&id=1Uq0sHSq9uSqtb2mYw35Si9_r20Y_bnzm'
+assert p.normal('https://github.com/user/repo/blob/main/src/x.lua') == 'https://raw.githubusercontent.com/user/repo/main/src/x.lua'
+assert p.normal('https://www.dropbox.com/s/abc/f.zip?dl=0') == 'https://www.dropbox.com/s/abc/f.zip?dl=1'
+forms = '''<form action="/x-download" method="POST"><input type="hidden" name="_token" value="t"><button></button></form>
+<form action="/index.php?do=cookieConsentToggle" method="POST"><input type="hidden" name="a" value="1"></form>
+<form action="/forum/login/" method="POST"><input type="hidden" name="a" value="1"></form>'''
+assert [a for a, _ in p.formularios_de_download(forms, 'https://s.com/')] == ['https://s.com/x-download'], p.formularios_de_download(forms, 'https://s.com/')
+print('TESTE SERVICOS DE ARQUIVO OK')
