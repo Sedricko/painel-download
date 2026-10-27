@@ -322,3 +322,15 @@ assert p.extensao('https://s/x/TW8.jpg/revision/latest/scale-to-width-down/185?c
 assert p.extensao('https://s/pagina') == '' and p.extensao('https://s/a/b.php') == 'php', 'pagina normal nao muda'
 assert p.caminho_local('/r', 'https://static.wikia.nocookie.net/x/a/TW8.jpg/revision/latest?cb=1').endswith('.jpg'), 'salva com .jpg, nao .html'
 print('TESTE IMAGEM FANDOM OK')
+
+# --- lista de novos: 2a rodada sobre a mesma pasta deve registrar 0 novos ---
+tmpn = os.path.join(tempfile.mkdtemp(), 'espelho')
+ln = []
+rodar_n = lambda: p.espelhar([f'http://127.0.0.1:{p2}/'], tmpn, ln.append, threading.Event(), robots=False, pausa=0, gerar_zip=False, sitemap=False)
+rodar_n()
+assert any('arquivos novos nesta rodada' in m for m in ln), 'informa quantos novos'
+primeiros = len(open(os.path.join(tmpn, '.painel', 'novos.txt')).read().split())
+assert primeiros > 0, 'primeira rodada tem novos'
+del ln[:]; rodar_n()
+assert open(os.path.join(tmpn, '.painel', 'novos.txt')).read().strip() == '' and any('0 arquivos novos' in m for m in ln), 'rodar de novo sem mudanca: 0 novos'
+print('TESTE NOVOS OK')
