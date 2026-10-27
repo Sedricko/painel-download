@@ -80,7 +80,7 @@ MODULO = re.compile(r'(?i)^(?:ext|skin|mediawiki|vendor|oojs|wikia|jquery)\.[\w.
 QUOTADO = re.compile(r'''["'`]([^"'`\s<>(){}\\|^]+(?:\.(?:%s)|/(?:%s))(?:[?#][^"'`\s]*)?)["'`]''' % ('|'.join(
     sorted((re.escape(e) for e in CONHECIDAS if e), key=len, reverse=True)), '|'.join(SEM_PONTO)), re.I)  # "dir/arquivo.lua" escondido em qualquer texto
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'  # como o navegador; sem isso muitos sites dao 403
-VERSAO_PAINEL = 49  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
+VERSAO_PAINEL = 50  # sobe a cada melhoria; a atualizacao automatica compara com a do GitHub
 RAW = 'https://raw.githubusercontent.com/Sedricko/painel-download/claude/wonderful-brown-74iy6z/scripts/painel_download.py'
 
 
@@ -686,6 +686,11 @@ def espelhar(urls, raiz, log, parar, profundidade=3, limite=200, mesmo_site=True
     open(os.path.join(painel, 'falhas.txt'), 'w', encoding='utf-8').write(''.join(f'{u}  ({c})\n' for u, c in falhas.items()))
     if falhas:
         log(f'aviso: {len(falhas)} nao baixaram (lista em {os.path.join(painel, "falhas.txt")})')
+    entradas_bloqueadas = [u for u in urls if u in falhas and isinstance(falhas[u], int) and falhas[u] in (403, 401, 429)]
+    if entradas_bloqueadas and baixados[0] > len(urls):  # a entrada caiu, mas o sitemap/links trouxeram o resto
+        log(f'aviso: a pagina de entrada foi bloqueada ({entradas_bloqueadas[0]}), mas segui pelo sitemap e peguei {baixados[0]} arquivos -- isso e normal em alguns sites')
+    elif entradas_bloqueadas:  # so a entrada, e nada mais veio
+        log(f'aviso: a entrada foi bloqueada e nao achei o sitemap. Tente colar uma pagina interna (ex.: {urls[0].rstrip("/")}/wiki ou outra pagina do site)')
     motivos = {}
     for u in set(falhas) | set(nao_copiados):
         motivos[u] = (f'erro {falhas[u]}' if isinstance(falhas[u], int) else 'erro de rede') if u in falhas else \

@@ -248,3 +248,24 @@ def _erro(*a, **k): raise OSError('sem rede')
 _ur.urlopen = _erro; assert p.versao_nova() is None, 'sem internet -> nao atualiza'
 _ur.urlopen = _orig_open
 print('TESTE UPDATE OK')
+
+# --- aviso quando a entrada e bloqueada mas o resto vem ---
+import http.server as _h, threading as _t, tempfile as _tf
+class H3(_h.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        if self.path == '/':  # entrada bloqueada
+            self.send_response(403); self.end_headers(); return
+        if self.path == '/robots.txt':
+            self.send_response(200); self.end_headers(); self.wfile.write(b'Sitemap: http://127.0.0.1:%d/sitemap.xml\n' % p3); return
+        if self.path == '/sitemap.xml':
+            self.send_response(200); self.end_headers()
+            self.wfile.write(b'<urlset><url><loc>http://127.0.0.1:%d/pagina-interna</loc></url></urlset>' % p3); return
+        self.send_response(200); self.end_headers(); self.wfile.write(b'<html>conteudo</html>')
+srv3 = _h.ThreadingHTTPServer(('127.0.0.1', 0), H3); p3 = srv3.server_address[1]
+_t.Thread(target=srv3.serve_forever, daemon=True).start()
+raiz3, msgs = os.path.join(_tf.mkdtemp(), 'espelho'), []
+p.espelhar([f'http://127.0.0.1:{p3}/'], raiz3, msgs.append, threading.Event(), robots=False, pausa=0, gerar_zip=False)
+assert any('entrada foi bloqueada' in m and 'segui pelo sitemap' in m for m in msgs), ['SEM AVISO'] + [m for m in msgs if 'aviso' in m]
+assert os.path.exists(os.path.join(raiz3, f'127.0.0.1_{p3}', 'pagina-interna.html')), 'pegou a pagina interna pelo sitemap mesmo com a entrada bloqueada'
+print('TESTE AVISO ENTRADA OK')
