@@ -1,0 +1,16 @@
+Master SPA - extensao Chrome (Manifest V3)
+
+Instalar: chrome://extensions > Modo do desenvolvedor > Carregar sem compactacao > escolha esta pasta.
+Depois de instalar, recarregue (F5) as abas abertas.
+
+Popup:
+- Scan DOM: acha botoes, links, campos e divs com onClick do React (Fiber). Mostra quantos achou.
+- Destacar on/off: contorno azul (HTML) ou vermelho (React) com o numero de cada elemento.
+- Export JSON: salva Downloads/master-spa/<site>-<data>.json com o DOM mapeado e as chamadas fetch/XHR.
+- Painel de acoes (Fase 2): lista em Shadow DOM, com filtro e botoes Ver, Clicar e Digitar.
+
+Rede: guarda as ultimas 500 chamadas (corpo ate 2000 caracteres). Mascara senha/token em JSON e form;
+nao guarda cabecalhos nem cookies. O JSON fica so no seu PC, mas confira antes de mandar para alguem.
+Limites: nao entra em iframes nem em shadow roots da pagina.
+
+Teste (sem internet): node teste_extensao.js
